@@ -5,9 +5,9 @@ import random
 import time
 import pickle
 
-# Import your game components
+# Import the game components
 from constants import *
-from run import GameController  # Make sure this is the correct import for your game controller
+from run import GameController 
 
 class PacmanWrapper:
     """
