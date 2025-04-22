@@ -190,7 +190,7 @@ class PacmanWrapper:
         Converts the raw state dictionary into a flattened numpy array (features)
         suitable for input to the neural network. Includes normalization and one-hot encoding.
         """
-        # Define approximate map dimensions for normalization (adjust if map changes)
+        # Define approximate map dimensions for normalization
         max_x, max_y = 560, 620
         # Normalize Pac-Man's position
         pos = np.array(state_dict['position']) / np.array([max_x, max_y])
@@ -216,7 +216,7 @@ class PacmanWrapper:
                 frightened = np.array([float(ghost['frightened'])]) # 0.0 or 1.0
                 ghost_features.extend(np.concatenate((ghost_pos, frightened))) # Append (x, y, frightened)
             else:
-                # Pad with placeholder values (-1) if fewer ghosts are present (shouldn't happen in standard Pac-Man)
+                # Pad with placeholder values (-1) if fewer ghosts are present
                 ghost_features.extend([-1.0, -1.0, -1.0])
 
         # Combine all features into a single vector
