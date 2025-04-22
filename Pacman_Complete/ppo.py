@@ -185,23 +185,50 @@ class PacmanWrapper:
         # Return initial state
         return self.get_state()
 
-    def extract_features(self, state):
-        """Turn the game states into numbers that neural network can use"""
-        #normalize the pac man position
-        pos = np.array(state['position']) / 512
-        # to convert the directions to a vector
-        dir_one_hot = np.zeros(4)
-        if state['direction'] in DIRECTION_TO_INDEX:
-            dir_one_hot[DIRECTION_TO_INDEX[state['direction']]] = 1
-        # extract 3 features per ghost for all the ghosts in the game
-        # to tell the neural network where they are and if they are frightened
+    def extract_features(self, state_dict):
+        """
+        Converts the raw state dictionary into a flattened numpy array (features)
+        suitable for input to the neural network. Includes normalization and one-hot encoding.
+        """
+        # Define approximate map dimensions for normalization (adjust if map changes)
+        max_x, max_y = 560, 620
+        # Normalize Pac-Man's position
+        pos = np.array(state_dict['position']) / np.array([max_x, max_y])
+
+        # One-hot encode Pac-Man's current direction
+        dir_one_hot = np.zeros(ACTION_DIM)
+        if state_dict['direction'] in DIRECTION_TO_INDEX:
+            dir_one_hot[DIRECTION_TO_INDEX[state_dict['direction']]] = 1
+
+        # One-hot encode the currently valid moves (important for action masking)
+        valid_moves_one_hot = np.zeros(ACTION_DIM)
+        for move in state_dict['valid_moves']:
+             if move in DIRECTION_TO_INDEX:
+                 valid_moves_one_hot[DIRECTION_TO_INDEX[move]] = 1
+
+        # Extract and normalize ghost features (position + frightened status)
         ghost_features = []
-        for ghost in state['ghosts']:
-            ghost_pos = np.array(ghost['position']) / 512
-            frightened = np.array([float(ghost['frightened'])])
-            ghost_features.extend(np.concatenate((ghost_pos, frightened)))
-        # retun a combination of pacmans position, direction and ghosts features
-        return np.concatenate((pos, dir_one_hot, ghost_features)).astype(np.float32)
+        num_ghosts = 4 # Standard number of ghosts
+        for i in range(num_ghosts):
+            if i < len(state_dict['ghosts']):
+                ghost = state_dict['ghosts'][i]
+                ghost_pos = np.array(ghost['position']) / np.array([max_x, max_y])
+                frightened = np.array([float(ghost['frightened'])]) # 0.0 or 1.0
+                ghost_features.extend(np.concatenate((ghost_pos, frightened))) # Append (x, y, frightened)
+            else:
+                # Pad with placeholder values (-1) if fewer ghosts are present (shouldn't happen in standard Pac-Man)
+                ghost_features.extend([-1.0, -1.0, -1.0])
+
+        # Combine all features into a single vector
+        # Order: pac_pos (2), pac_dir (4), valid_moves (4), ghost1 (3), ghost2 (3), ghost3 (3), ghost4 (3)
+        # Total size = 2 + 4 + 4 + 4*3 = 22
+        features = np.concatenate((
+            pos,
+            dir_one_hot,
+            valid_moves_one_hot, # Include valid moves info in the state vector
+            ghost_features
+        )).astype(np.float32)
+        return features
 
 def normalize(values):
     """Normalize a numpy array."""
