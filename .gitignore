@@ -1,3 +1,4 @@
 *.pyc
 *.h5
-*.keras
+checkpoint_*.keras
+best_*.keras
