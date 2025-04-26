@@ -25,6 +25,7 @@ class PacmanWrapper:
         # Initialize state variables
         self.previous_score = 0
         self.previous_pellets = len(self.game.pellets.pelletList)
+        self.previous_powerpellets = len(self.game.pellets.powerpellets)
         self.previous_lives = self.game.lives
         self.pacman_was_alive = True
 
@@ -69,7 +70,8 @@ class PacmanWrapper:
                 'valid_moves': [],
                 'ghosts': [], 
                 'score': self.game.score, 
-                'lives': self.game.lives
+                'lives': self.game.lives,
+                'level': self.game.level
             }
 
         position = (int(pacman.position.x), int(pacman.position.y))
@@ -87,7 +89,8 @@ class PacmanWrapper:
             'valid_moves': valid_moves,
             'ghosts': ghosts, 
             'score': self.game.score, 
-            'lives': self.game.lives
+            'lives': self.game.lives,
+            'level': self.game.level
         }
     
     def take_action(self, direction):
@@ -129,22 +132,72 @@ class PacmanWrapper:
         return next_state, reward, done
 
 
+    # def calculate_reward(self):
+    #     """Calculate reward based on game events"""
+    #     current_score = self.game.score
+    #     current_pellets = len(self.game.pellets.pelletList)
+    #     current_powerpellets = len(self.game.pellets.powerpellets)
+    #     current_lives = self.game.lives
+
+    #     reward = 0
+
+    #     # Reward for score increase
+    #     reward += 0.1 * (current_score - self.previous_score) 
+    #     # Reward for eating pellets
+    #     reward += 5 * (self.previous_pellets - current_pellets)
+    #     # Penalty for losing lives
+    #     reward -= 50 * (self.previous_lives - current_lives) 
+    #     # Small penalty to encourage faster completion
+    #     reward -= 0.01
+
+    #     # Reward for completing level
+    #     if self.game.pellets.isEmpty():
+    #         reward += 200
+
+    #     # Update previous values
+    #     self.previous_score = current_score
+    #     self.previous_pellets = current_pellets
+    #     self.previous_lives = current_lives
+
+    #     return reward
+
     def calculate_reward(self):
         """Calculate reward based on game events"""
         current_score = self.game.score
         current_pellets = len(self.game.pellets.pelletList)
+        current_powerpellets = len(self.game.pellets.powerpellets)
         current_lives = self.game.lives
 
         reward = 0
 
-        # Reward for score increase
-        reward += 0.1 * (current_score - self.previous_score) 
-        # Reward for eating pellets
-        reward += 5 * (self.previous_pellets - current_pellets)
-        # Penalty for losing lives
-        reward -= 50 * (self.previous_lives - current_lives) 
+        # Significant penalty for losing a life
+        reward -= 100 * (self.previous_lives - current_lives)
+
         # Small penalty to encourage faster completion
         reward -= 0.01
+
+        # Reward for eating pellets
+        reward += 5 * (self.previous_pellets - current_pellets)
+
+        # Reward for score increase
+        reward += 0.1 * (current_score - self.previous_score)
+
+        # Reward for eating a power pellet
+        if current_powerpellets < self.previous_powerpellets:
+            reward += 50
+
+        # Reward for eating a frightened ghost
+        if self.game.ghost_eaten_in_last_step:
+            reward += 75
+
+        # Penalty for being in close proximity to an aggressive ghost
+        # This encourages the agent to maintain safe distances.
+        proximity_penalty = 0
+        for ghost in self.game.ghosts:
+            if ghost.mode.current == CHASE or ghost.mode.current == SCATTER:
+                if (self.game.pacman.position - ghost.position).magnitude() < SAFE_DISTANCE:
+                    proximity_penalty += 1 # Accumulate penalty for each close aggressive ghost
+        reward -= proximity_penalty * 1.0
 
         # Reward for completing level
         if self.game.pellets.isEmpty():
@@ -154,6 +207,7 @@ class PacmanWrapper:
         self.previous_score = current_score
         self.previous_pellets = current_pellets
         self.previous_lives = current_lives
+        self.previous_powerpellets = current_powerpellets
 
         return reward
 
@@ -179,6 +233,7 @@ class PacmanWrapper:
         # Reset state variables
         self.previous_score = self.game.score
         self.previous_pellets = len(self.game.pellets.pelletList)
+        self.previous_powerpellets = len(self.game.pellets.powerpellets)
         self.previous_lives = self.game.lives
         self.pacman_was_alive = True
 
@@ -486,14 +541,32 @@ class PPOAgent:
 
 
 def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, epochs_per_update=10, save_interval=50):
-    """Train the PPO agent on the Pac-Man game."""
-    # Training metrics
+    """
+    Train the PPO agent on the Pac-Man game, focusing on survival evaluation.
+    """
+    # Training & Evaluation Metrics
     episode_rewards = []
-    moving_avg = []
-    best_avg_reward = -np.inf
+    moving_avg_reward = []
+
+    episode_steps_list = [] # Track episode duration (time alive proxy)
+    moving_avg_steps = []
+
+    # episode_final_lives = [] # Track lives remaining at the end of the episode
+    # moving_avg_lives = []
+
+    # episode_final_level = [] # Track level reached at the end of the episode
+    # moving_avg_level = []
+
+    # Best performance tracking (based on survival steps/time)
+    best_avg_steps = 0 # Use average steps (time alive) as primary survival metric for saving
+
     global_step = 0 # Total steps across all episodes
 
-    print(f"Starting PPO Training: Episodes={episodes}, MaxSteps/Ep={max_steps}, UpdateFreq={update_frequency}, Epochs/Update={epochs_per_update}")
+    avg_window = 100 # Window size for moving averages
+
+    print(f"Starting PPO Training (Survival Focus): Episodes={episodes}, MaxSteps/Ep={max_steps}, UpdateFreq={update_frequency}, Epochs/Update={epochs_per_update}")
+    print(f"Saving best model based on {avg_window}-episode average time alive (steps)")
+
 
     for episode in range(episodes):
         # Reset environment and get initial state dictionary
@@ -540,31 +613,50 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
 
             # Learn if the buffer reaches the update frequency
             if len(agent.buffer_states) >= update_frequency:
+                print(f"--- Learning at Global Step: {global_step} ---")
                 agent.learn(batch_size=update_frequency // 4, epochs=epochs_per_update)
 
         # --- End of Step Loop ---
 
         # --- End of Episode ---
         episode_rewards.append(episode_reward)
-        # Calculate moving average
-        avg_window = 100
-        current_avg = np.mean(episode_rewards[-avg_window:]) if len(episode_rewards) >= avg_window else np.mean(episode_rewards)
-        moving_avg.append(current_avg)
+        episode_steps_list.append(episode_steps) # Record episode steps (time alive)
+        # episode_final_lives.append(state_dict['lives']) # Record final lives
+        # episode_final_level.append(state_dict['level']) # Record final level
 
-        # Save best model based on moving average (only after enough episodes for meaningful avg)
-        if len(episode_rewards) > avg_window // 2 and current_avg > best_avg_reward:
-            best_avg_reward = current_avg
-            print(f"*** New Best Average Reward ({avg_window} ep): {best_avg_reward:.2f} at episode {episode+1} ***")
-            agent.save("best_actor.keras", "best_critic.keras")
+        # Calculate moving averages for all metrics
+        current_avg_reward = np.mean(episode_rewards[-avg_window:]) if len(episode_rewards) >= avg_window else np.mean(episode_rewards)
+        moving_avg_reward.append(current_avg_reward)
+
+        current_avg_steps = np.mean(episode_steps_list[-avg_window:]) if len(episode_steps_list) >= avg_window else np.mean(episode_steps_list)
+        moving_avg_steps.append(current_avg_steps)
+
+        # current_avg_lives = np.mean(episode_final_lives[-avg_window:]) if len(episode_final_lives) >= avg_window else np.mean(episode_final_lives)
+        # moving_avg_lives.append(current_avg_lives)
+
+        # current_avg_level = np.mean(episode_final_level[-avg_window:]) if len(episode_final_level) >= avg_window else np.mean(episode_final_level)
+        # moving_avg_level.append(current_avg_level)
+
+
+        # Save best model based on moving average steps (time alive)
+        # Only evaluate after enough episodes for the moving average to be meaningful
+        if len(episode_steps_list) > avg_window // 2 and current_avg_steps > best_avg_steps:
+            best_avg_steps = current_avg_steps
+            print(f"*** New Best Average Time Alive ({avg_window} ep): {best_avg_steps:.2f} steps at episode {episode+1} ***")
+            agent.save("best_survival_actor.keras", "best_survival_critic.keras")
 
         # Progress reporting
         if (episode + 1) % 10 == 0 or episode == 0: # Report every 10 episodes
              print(f"Ep {episode + 1} | "
-                   f"Score: {state_dict['score']} | " # Use final score from state_dict
-                   f"Reward: {episode_reward:.1f} | "
-                   f"Avg {avg_window}: {current_avg:.1f} | "
-                   f"Steps: {episode_steps} | "
-                   f"Total Steps: {global_step}") # Show global steps
+                   f"Raw R: {episode_reward:.1f} | "
+                   f"Avg R ({avg_window}): {current_avg_reward:.1f} | "
+                   f"Steps (Time): {episode_steps} | " # Raw steps for the episode
+                   f"Avg Steps ({avg_window}): {current_avg_steps:.1f} | " # Avg steps (time alive)
+                #    f"Final Lives: {state_dict['lives']} | " # Final lives for the episode
+                #    f"Avg Lives ({avg_window}): {current_avg_lives:.1f} | " # Avg final lives
+                #    f"Final Level: {state_dict['level']} | " # Final level for the episode
+                #    f"Avg Level ({avg_window}): {current_avg_level:.1f} | " # Avg final level
+                   f"Total Steps: {global_step}")
 
         # Checkpoint saving
         if (episode + 1) % save_interval == 0:
@@ -575,21 +667,43 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
     # --- End of Training Loop ---
 
     # Final save and plot
-    print("--- Training finished. Saving final model and plot. ---")
-    agent.save("final_actor.keras", "final_critic.keras")
+    print("--- Training finished. Saving final model and plots. ---")
+    agent.save("final_survival_actor.keras", "final_survival_critic.keras")
 
-    plt.figure(figsize=(12, 6))
-    plt.plot(episode_rewards, alpha=0.4, label='Episode Reward', color='lightblue')
-    plt.plot(moving_avg, linewidth=2, label=f'{avg_window}-Episode Avg Reward', color='blue')
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.title("PPO Training Progress on Pac-Man")
+    plt.figure(figsize=(12, 10))
+
+    # Plot Average Reward
+    plt.subplot(2, 1, 1) # 2 rows, 1 column, 1st plot
+    plt.plot(moving_avg_reward, linewidth=2, label=f'{avg_window}-Episode Avg Reward', color='blue')
+    plt.ylabel("Average Reward")
+    plt.title("PPO Training Progress (Reward)")
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
+
+    # Plot Average Time Alive (Steps)
+    plt.subplot(2, 1, 2) # 2nd plot
+    plt.plot(moving_avg_steps, linewidth=2, label=f'{avg_window}-Episode Avg Time Alive (Steps)', color='green')
+    plt.ylabel("Average Steps per Episode")
+    plt.title("PPO Training Progress (Time Alive)")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.6)
+
+
+    # # Plot Average Levels Completed & Final Lives
+    # plt.subplot(3, 1, 3) # 3rd plot
+    # plt.plot(moving_avg_level, linewidth=2, label=f'{avg_window}-Episode Avg Level', color='red')
+    # plt.plot(moving_avg_lives, linewidth=2, label=f'{avg_window}-Episode Avg Final Lives', color='purple', linestyle='--')
+    # plt.xlabel("Episode")
+    # plt.ylabel("Average Count")
+    # plt.title("PPO Training Progress (Level and Lives)")
+    # plt.legend()
+    # plt.grid(True, linestyle='--', alpha=0.6)
+
+
     plt.tight_layout()
-    plt.savefig("ppo_training_progress.png")
+    plt.savefig("ppo_survival_training_progress.png")
     plt.close()
-    print("Training progress plot saved to ppo_training_progress.png")
+    print("Survival training progress plot saved to ppo_survival_training_progress.png")
 
     return agent
 
@@ -619,11 +733,11 @@ if __name__ == "__main__":
     print(f"Action dimension: {action_size}")
 
     # Create the PPO agent
-    ppo_agent = PPOAgent(state_size, action_size, learning_rate=0.0001, clip_epsilon=0.1, entropy_coeff=0.01)
+    ppo_agent = PPOAgent(state_size, action_size, learning_rate=0.0001, clip_epsilon=0.2, entropy_coeff=0.01)
 
     # Load pre-trained model if available
     try:
-        ppo_agent.load("final_actor.keras", "final_critic.keras")
+        ppo_agent.load("final_survival_actor.keras", "final_survival_critic.keras")
         # Or load the best one:
         # ppo_agent.load("best_actor.keras", "best_critic.keras")
     except Exception as e:

@@ -33,6 +33,7 @@ class GameController(object):
         self.fruitCaptured = []
         self.fruitNode = None
         self.mazedata = MazeData()
+        self.ghost_eaten_in_last_step = False
 
     def setBackground(self):
         self.background_norm = pygame.surface.Surface(SCREENSIZE).convert()
@@ -102,6 +103,7 @@ class GameController(object):
         dt = self.clock.tick(30) / 1000.0
         self.textgroup.update(dt)
         self.pellets.update(dt)
+        self.ghost_eaten_in_last_step = False
         if not self.pause.paused:
             self.ghosts.update(dt)      
             if self.fruit is not None:
@@ -175,6 +177,8 @@ class GameController(object):
                     self.pause.setPause(pauseTime=1, func=self.showEntities)
                     ghost.startSpawn()
                     self.nodes.allowHomeAccess(ghost)
+                    self.ghost_eaten_in_last_step = True
+
                 elif ghost.mode.current is not SPAWN:
                     if self.pacman.alive:
                         self.lives -=  1
@@ -191,7 +195,6 @@ class GameController(object):
         if self.pellets.numEaten == 50 or self.pellets.numEaten == 140:
             if self.fruit is None:
                 self.fruit = Fruit(self.nodes.getNodeFromTiles(9, 20), self.level)
-                print(self.fruit)
         if self.fruit is not None:
             if self.pacman.collideCheck(self.fruit):
                 self.updateScore(self.fruit.points)
