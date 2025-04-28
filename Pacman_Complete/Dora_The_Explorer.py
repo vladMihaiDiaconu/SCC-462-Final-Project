@@ -192,26 +192,25 @@ class PacmanWrapper:
 
         reward = 0
         # Reward for score increase
-        reward += 0.1 * (current_score - self.previous_score)
-
+        reward += 0.01 * (current_score - self.previous_score)
         # Reward for eating pellets (gives to Dora +12)
         pellets_eaten = self.previous_pellets - current_pellets
-        reward += 12 * pellets_eaten
+        reward += 1.2 * pellets_eaten
 
         # Reward for corridors (gives to Dora +2)
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
-            reward += 2
+            reward += 0.2
 
         # Penalty for losing lives (penalizes to Dora -100) optimization in variable
 
-        reward -= 100 * (self.previous_lives - current_lives)
+        reward -= 5 * (self.previous_lives - current_lives)
 
         # Reward for completing level
         if self.game.pellets.isEmpty():
-            reward += 500
+            reward += 5.0
 
         # Small penalty to encourage faster completion
-        reward -= 0.1
+        reward -= 0.05
 
         ###- New To the Original Qlearninr_basic code
 
@@ -219,7 +218,7 @@ class PacmanWrapper:
         self.visit_counts[pac_pos] += 1
         if any(int(p.position.x)==pac_pos[0] and int(p.position.y)==pac_pos[1]
                for p in self.game.pellets.pelletList):
-            reward += 5 / self.visit_counts[pac_pos]
+            reward += 1 / self.visit_counts[pac_pos]
 
         # Loop deterrent
         if len(self.recent_positions)>=self.LOOP_WINDOW and len(set(self.recent_positions))<=2:
@@ -227,7 +226,7 @@ class PacmanWrapper:
         self.recent_positions.append(pac_pos)
         # Reverse‑move penalty
         if action == {UP:DOWN, DOWN:UP, LEFT:RIGHT, RIGHT:LEFT}.get(self.prev_direction, STOP):
-            reward -= 0.5
+            reward -= 0.2
         self.prev_direction = action
 
         ###-
@@ -300,10 +299,10 @@ class SimpleRLAgent:
         """Convert state dict to a hashable key for the Q-table"""
         # Create a simplified state representation for the Q-table
         # Focus on Pac-Man's position and ghost positions
-        pacman_pos = state['position']
+        pacman_pos = (state['position'][0] // 16, state['position'][1] // 16)
 
         # Simplifyded ghost representation
-        ghosts = tuple((g['position'], g['frightened']) for g in state['ghosts'])
+        ghosts = tuple(((g['position'][0] // 16, g['position'][1] // 16), g['frightened']) for g in state['ghosts'])
 
         # Create a hashable key
         return (pacman_pos, ghosts, state['lives'], state['pellet_here'])
@@ -378,7 +377,7 @@ class SimpleRLAgent:
 
         #Decay exploration over time
         if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+            self.epsilon = max(self.epsilon_min, self.epsilon - 0.001)
 
     # Save and Load Files
     def save(self, filename="Dora_Agent.pkl"):

@@ -279,7 +279,7 @@ class SurvivalBasedAgent:
         self.ppo_agent = PPOAgent(state_size, action_size)
         self.q_agent = SimpleRLAgent()
         
-        self.threat_threshold = 0.02
+        self.threat_threshold = 0.04
         # Increased ghost weights to make survival mode trigger more often
         self.ghost_weights = [2.0, 1.6, 1.2, 1.0]
         self.min_distance_offset = 20.0
@@ -293,19 +293,6 @@ class SurvivalBasedAgent:
         
         # Track previous mode to only print when there's a change
         self.previous_mode_was_survival = None
-    
-    def load_agents(self, ppo_actor_path="ppo_actor.keras", ppo_critic_path="ppo_critic.keras", q_agent_path="Dora_Agent.pkl"):
-        try:
-            self.ppo_agent.load(ppo_actor_path, ppo_critic_path)
-            print(f"Successfully loaded PPO agent from {ppo_actor_path} and {ppo_critic_path}")
-        except Exception as e:
-            print(f"Could not load PPO agent: {e}")
-        
-        try:
-            self.q_agent.load(q_agent_path)
-            print(f"Successfully loaded Q-learning agent from {q_agent_path}")
-        except Exception as e:
-            print(f"Could not load Q-learning agent: {e}")
     
     def calculate_threat_value(self, state_dict):
         pacman_pos = np.array(state_dict['position'])
@@ -420,11 +407,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     print(f"Training with {'fast' if fast_mode else 'visual'} mode")
     
     agent = SurvivalBasedAgent(state_size, action_size)
-    
-    try:
-        agent.load_agents()
-    except Exception as e:
-        print(f"Starting with fresh agents: {e}")
+    print("Training from scratch — no pre-trained models loaded.")
     
     os.makedirs('checkpoints', exist_ok=True)
     
@@ -699,9 +682,6 @@ def evaluate_with_analytics(agent, episodes=10, render=True, fast_mode=False):
               f"{'COMPLETED' if level_completed else 'FAILED'}")
 
 if __name__ == "__main__":
-    random.seed(42)
-    np.random.seed(42)
-    tf.random.set_seed(42)
     
     # Ask user whether the user wants to see the Pac-Man window during training
     print("--------------------------------------------------------------------------------------------------------------------------")

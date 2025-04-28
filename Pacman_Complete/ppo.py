@@ -240,50 +240,252 @@ class PacmanWrapper:
         # Return initial state
         return self.get_state()
 
-    def extract_features(self, state_dict):
-        """
-        Converts the raw state dictionary into a flattened numpy array (features)
-        suitable for input to the neural network. Includes normalization and one-hot encoding.
-        """
-        # Define approximate map dimensions for normalization
-        max_x, max_y = 560, 620
-        # Normalize Pac-Man's position
-        pos = np.array(state_dict['position']) / np.array([max_x, max_y])
-
-        # One-hot encode Pac-Man's current direction
-        dir_one_hot = np.zeros(ACTION_DIM)
-        if state_dict['direction'] in DIRECTION_TO_INDEX:
-            dir_one_hot[DIRECTION_TO_INDEX[state_dict['direction']]] = 1
-
-        # One-hot encode the currently valid moves (important for action masking)
-        valid_moves_one_hot = np.zeros(ACTION_DIM)
-        for move in state_dict['valid_moves']:
-             if move in DIRECTION_TO_INDEX:
-                 valid_moves_one_hot[DIRECTION_TO_INDEX[move]] = 1
-
-        # Extract and normalize ghost features (position + frightened status)
-        ghost_features = []
-        num_ghosts = 4 # Standard number of ghosts
-        for i in range(num_ghosts):
-            if i < len(state_dict['ghosts']):
-                ghost = state_dict['ghosts'][i]
-                ghost_pos = np.array(ghost['position']) / np.array([max_x, max_y])
-                frightened = np.array([float(ghost['frightened'])]) # 0.0 or 1.0
-                ghost_features.extend(np.concatenate((ghost_pos, frightened))) # Append (x, y, frightened)
+def predict_ghost_positions(self, steps_ahead=3):
+    """
+    Predict ghost movement for the next few steps to enable proactive avoidance.
+    This is a simple prediction based on current direction and maze constraints.
+    
+    Args:
+        steps_ahead: How many steps to predict ahead
+        
+    Returns:
+        List of predicted ghost positions for each step
+    """
+    predicted_positions = []
+    
+    for step in range(1, steps_ahead + 1):
+        step_predictions = []
+        
+        for ghost in self.game.ghosts:
+            # Skip frightened ghosts as they're not threatening
+            if ghost.mode.current is FREIGHT:
+                step_predictions.append(None)
+                continue
+                
+            # If ghost is at a node, predict possible directions
+            if ghost.node is not None:
+                # For simplicity, predict ghost will continue in current direction if possible
+                # This is a simplification - actual ghost AI is more complex
+                current_pos = (ghost.position.x, ghost.position.y)
+                
+                # Get neighboring nodes in 4 directions
+                possible_next_positions = []
+                for direction in [UP, DOWN, LEFT, RIGHT]:
+                    next_node = ghost.node.neighbors.get(direction)
+                    if next_node:
+                        # Ghosts don't turn around unless they have to
+                        # Check if this would be a reversal of direction
+                        reversal = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}.get(ghost.direction)
+                        if direction != reversal or len(ghost.node.neighbors) == 1:
+                            vec = next_node.position - ghost.position
+                            # Calculate how far ghost would travel in 'step' steps at its speed
+                            # This is an approximation assuming constant speed
+                            step_distance = ghost.speed * step
+                            # Scale the direction vector by the distance
+                            if vec.magnitude() > 0:  # Avoid division by zero
+                                scaled_vec = vec * (step_distance / vec.magnitude())
+                                new_pos = (ghost.position.x + scaled_vec.x, 
+                                          ghost.position.y + scaled_vec.y)
+                                possible_next_positions.append(new_pos)
+                
+                # If multiple positions are possible, use the one closest to Pac-Man for worst-case scenario
+                if possible_next_positions:
+                    pacman_pos = (self.game.pacman.position.x, self.game.pacman.position.y)
+                    distances = [((pos[0] - pacman_pos[0])**2 + (pos[1] - pacman_pos[1])**2) for pos in possible_next_positions]
+                    closest_idx = distances.index(min(distances))
+                    step_predictions.append(possible_next_positions[closest_idx])
+                else:
+                    # If no valid moves, ghost stays in place
+                    step_predictions.append(current_pos)
             else:
-                # Pad with placeholder values (-1) if fewer ghosts are present
-                ghost_features.extend([-1.0, -1.0, -1.0])
+                # Ghost is between nodes, extrapolate position based on velocity
+                new_x = ghost.position.x + ghost.direction.x * ghost.speed * step
+                new_y = ghost.position.y + ghost.direction.y * ghost.speed * step
+                step_predictions.append((new_x, new_y))
+                
+        predicted_positions.append(step_predictions)
+    
+    return predicted_positions
 
-        # Combine all features into a single vector
-        # Order: pac_pos (2), pac_dir (4), valid_moves (4), ghost1 (3), ghost2 (3), ghost3 (3), ghost4 (3)
-        # Total size = 2 + 4 + 4 + 4*3 = 22
-        features = np.concatenate((
-            pos,
-            dir_one_hot,
-            valid_moves_one_hot, # Include valid moves info in the state vector
-            ghost_features
-        )).astype(np.float32)
-        return features
+def calculate_safety_map(self, state_dict):
+    """
+    Create a danger map that considers path safety rather than just proximity.
+    Evaluates the surrounding area's safety level for escape options.
+    
+    Returns:
+        safety_score: A safety score where higher values mean safer positions
+    """
+    # Get Pac-Man's current node
+    pacman = self.game.pacman
+    if pacman.node is None:
+        return 0.0  # Not on a node, can't evaluate safety
+        
+    # Count escape routes from current position
+    escape_routes = 0
+    for direction in [UP, DOWN, LEFT, RIGHT]:
+        if pacman.node.neighbors.get(direction):
+            escape_routes += 1
+            
+    # Evaluate if Pac-Man is in a dead end
+    is_dead_end = escape_routes <= 1
+    
+    # Calculate distance to nearest power pellet (if any)
+    power_pellet_distances = []
+    for pellet in self.game.pellets.powerpellets:
+        pellet_pos = (pellet.position.x, pellet.position.y)
+        pacman_pos = (pacman.position.x, pacman.position.y)
+        distance = ((pellet_pos[0] - pacman_pos[0])**2 + (pellet_pos[1] - pacman_pos[1])**2)**0.5
+        power_pellet_distances.append(distance)
+    
+    nearest_power_pellet = min(power_pellet_distances) if power_pellet_distances else float('inf')
+    
+    # Get predicted ghost positions
+    predicted_ghost_positions = self.predict_ghost_positions(steps_ahead=3)
+    
+    # Calculate safety based on predicted ghost positions
+    safety_score = 100.0  # Start with a high safety score
+    
+    # Reduce safety score for each ghost based on predicted positions
+    for step, positions in enumerate(predicted_ghost_positions):
+        step_penalty = 1.0 / (step + 1)  # Nearer steps are more dangerous
+        
+        for i, pos in enumerate(positions):
+            if pos is None:  # Skip frightened ghosts
+                continue
+                
+            # Get ghost info
+            ghost = self.game.ghosts[i]
+            
+            # Calculate distance to predicted ghost position
+            pacman_pos = (pacman.position.x, pacman.position.y)
+            ghost_distance = ((pos[0] - pacman_pos[0])**2 + (pos[1] - pacman_pos[1])**2)**0.5
+            
+            # Penalty based on distance and ghost type
+            ghost_weight = self.get_ghost_danger_weight(ghost)
+            distance_penalty = 50.0 / (ghost_distance + 10.0)  # Higher penalty for closer ghosts
+            
+            safety_score -= distance_penalty * ghost_weight * step_penalty
+    
+    # Dead ends are very dangerous
+    if is_dead_end:
+        safety_score *= 0.5
+    
+    # Having multiple escape routes is safer
+    safety_score *= (1.0 + 0.2 * escape_routes)
+    
+    # Being near a power pellet increases safety
+    if nearest_power_pellet < 100:
+        safety_score += 50.0 / (nearest_power_pellet + 1.0)
+        
+    return max(0.0, safety_score)  # Ensure non-negative
+
+def get_ghost_danger_weight(self, ghost):
+    """
+    Calculate danger weight for specific ghost types based on their behavior patterns.
+    
+    In the original Pac-Man:
+    - Blinky (red): Most aggressive, follows Pac-Man directly
+    - Pinky (pink): Tries to ambush by targeting ahead of Pac-Man
+    - Inky (cyan): Complex targeting using Blinky's position
+    - Clyde (orange): Moves randomly when far, follows when close
+    
+    Returns:
+        float: Danger weight for the ghost
+    """
+    # Check if this is a specific ghost type by index
+    # (In the standard game, ghosts are in a specific order)
+    ghost_index = self.game.ghosts.index(ghost) if ghost in self.game.ghosts else -1
+    
+    # Default weight if we can't identify
+    if ghost_index == -1:
+        return 1.0
+        
+    # Weights based on ghost behavior patterns
+    if ghost_index == 0:  # Blinky (Red) - Most aggressive
+        return 1.5
+    elif ghost_index == 1:  # Pinky (Pink) - Ambusher
+        return 1.3
+    elif ghost_index == 2:  # Inky (Cyan) - Complex targeting
+        return 1.2
+    elif ghost_index == 3:  # Clyde (Orange) - Less aggressive
+        return 0.8
+    else:
+        return 1.0
+
+def calculate_reward(self):
+    """Enhanced reward function that considers safety and predictions"""
+    current_score = self.game.score
+    current_pellets = len(self.game.pellets.pelletList)
+    current_powerpellets = len(self.game.pellets.powerpellets)
+    current_lives = self.game.lives
+    
+    reward = 0
+    
+    # Significant penalty for losing a life
+    reward -= 100 * (self.previous_lives - current_lives)
+    
+    # Small penalty to encourage faster completion
+    reward -= 0.01
+    
+    # Reward for eating pellets
+    reward += 5 * (self.previous_pellets - current_pellets)
+    
+    # Reward for score increase
+    reward += 0.1 * (current_score - self.previous_score)
+    
+    # Reward for eating a power pellet
+    if current_powerpellets < self.previous_powerpellets:
+        reward += 50
+    
+    # Reward for eating a frightened ghost
+    if self.game.ghost_eaten_in_last_step:
+        reward += 75
+    
+    # NEW: Safety-aware rewards
+    # Calculate safety at current state
+    safety_score = self.calculate_safety_map(self.get_state())
+    
+    # Reward for staying in safe positions (more escape routes)
+    reward += 0.2 * safety_score
+    
+    # NEW: Penalty for being near predicted future ghost positions
+    predicted_positions = self.predict_ghost_positions(steps_ahead=3)
+    if predicted_positions:
+        pacman_pos = (self.game.pacman.position.x, self.game.pacman.position.y)
+        
+        # Check collision risk for the next few steps
+        collision_risk = 0
+        for step, positions in enumerate(predicted_positions):
+            # Earlier steps are more important
+            step_weight = 1.0 / (step + 1)
+            
+            for i, pos in enumerate(positions):
+                if pos is None:  # Skip frightened ghosts
+                    continue
+                
+                # Calculate distance to predicted ghost position
+                ghost_distance = ((pos[0] - pacman_pos[0])**2 + (pos[1] - pacman_pos[1])**2)**0.5
+                
+                # If very close to predicted position, add collision risk
+                if ghost_distance < 30:  # Danger radius
+                    ghost_weight = self.get_ghost_danger_weight(self.game.ghosts[i])
+                    collision_risk += ghost_weight * step_weight * (30 - ghost_distance) / 30
+        
+        # Apply penalty for collision risk
+        reward -= 10 * collision_risk
+    
+    # Reward for completing level
+    if self.game.pellets.isEmpty():
+        reward += 200
+    
+    # Update previous values
+    self.previous_score = current_score
+    self.previous_pellets = current_pellets
+    self.previous_lives = current_lives
+    self.previous_powerpellets = current_powerpellets
+    
+    return reward
+
 
 def normalize(values):
     """Normalize a numpy array."""
