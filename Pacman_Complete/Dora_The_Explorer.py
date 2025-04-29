@@ -284,7 +284,7 @@ class SimpleRLAgent:
         self.discount_factor = 0.99 #before 0.95
         # Exploration rate
         self.epsilon       = 1.0   # Exploration rate / Dora'll start fully exploratory
-        self.epsilon_decay = 0.9999 # To keep Dora as explorer as possible in most episodes
+        self.epsilon_decay = 0.9995 # To keep Dora as explorer as possible in most episodes
         self.epsilon_min   = 0.4
         ###- New To the Original Qlearninr_basic code
         # UCB bookkeeping

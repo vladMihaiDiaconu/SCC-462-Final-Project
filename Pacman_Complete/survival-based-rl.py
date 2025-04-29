@@ -143,7 +143,8 @@ class SurvivalBasedPacmanWrapper:
         reward += 0.1 * (current_score - self.previous_score)
         
         pellets_eaten = self.previous_pellets - current_pellets
-        reward += 12 * pellets_eaten
+
+        reward += 14 * pellets_eaten
         
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
             reward += 2
@@ -163,7 +164,7 @@ class SurvivalBasedPacmanWrapper:
 
         
         if len(self.recent_positions) >= 8 and len(set(self.recent_positions)) <= 2:
-            reward -= 1.0
+            reward -= 2.0
         self.recent_positions.append(pac_pos)
         
         reversal_map = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
@@ -175,6 +176,10 @@ class SurvivalBasedPacmanWrapper:
         self.previous_pellets = current_pellets
         self.previous_lives = current_lives
         
+        # Add reward for finishing above 75% of the level
+        if (240 - current_pellets) / 240 > 0.75 and self.previous_lives > current_lives:
+            reward += 100
+
         return reward
     
     def reset(self):
@@ -384,7 +389,7 @@ class SurvivalBasedAgent:
         print(f"Agents saved to {ppo_actor_path}, {ppo_critic_path}, and {q_agent_path}")
 
 
-def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
+def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
     global env
     
     # Disable or reduce rendering if in fast mode
@@ -416,6 +421,8 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     all_survival_ratio = []
     moving_avg_rewards = []
     episode_threat_values = []
+    completion_rate_per_100 = []
+    completion_percentages = []
     
     # For tracking training speed
     start_time = time.time()
@@ -432,7 +439,9 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         agent.previous_mode_was_survival = None  # Reset mode tracking at start of episode
         episode_survival_ratio = 0
         episode_threat_values.append([])
-        
+
+        completion_percentages.append(completion_pct)
+
         done = False
         while not done and steps < max_steps:
             action, survival_mode, threat_value = agent.choose_action(state)
@@ -462,6 +471,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         
         metrics = env.get_metrics()
         completion_pct = metrics.get("completion_percentage", 0)
+        completion_percentages.append(completion_pct)
 
         window_size = min(100, len(all_rewards))
         moving_avg = sum(all_rewards[-window_size:]) / window_size
@@ -484,13 +494,19 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
                 ppo_critic_path=f"checkpoints/survival_ppo_critic_ep{episode + 1}.keras",
                 q_agent_path=f"checkpoints/survival_q_agent_ep{episode + 1}.pkl"
             )
-            
+
+            avg_completion_100 = np.mean(completion_percentages[-100:])
+            completion_rate_per_100.append(avg_completion_100)
+
             plot_training_progress(
                 all_rewards, 
                 moving_avg_rewards, 
                 all_survival_ratio,
+                completion_percentages,
+                completion_rate_per_100,
                 episode + 1
             )
+
     
     agent.save_agents()
     
@@ -498,6 +514,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         all_rewards, 
         moving_avg_rewards, 
         all_survival_ratio,
+        completion_percentages,
         episodes,
         final=True
     )
@@ -514,7 +531,8 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     return agent
 
 
-def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=False):
+def plot_training_progress(rewards, moving_avg, survival_ratio, completion_percentages, completion_rate_per_100, episode, final=False):
+    
     plt.figure(figsize=(12, 10))
     
     plt.subplot(2, 1, 1)
@@ -534,6 +552,20 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
+    plt.figure(figsize=(12, 5))
+    plt.plot(range(len(completion_rate_per_100)), completion_rate_per_100, 'mo-', linewidth=2)
+    plt.xlabel('Checkpoint (x100 Episodes)')
+    plt.ylabel('Avg Completion %')
+    plt.title('Average Completion Rate Every 100 Episodes')
+    plt.grid(True, linestyle='--', alpha=0.6)
+
+    if final:
+        plt.savefig(f"survival_based_training_completion_rate_final.png")
+    else:
+        plt.savefig(f"checkpoints/survival_based_training_completion_rate_ep{episode}.png")
+
+    plt.close()
+
     plt.tight_layout()
     
     if final:
@@ -697,7 +729,7 @@ if __name__ == "__main__":
     print(f"Fast mode {'disabled' if not fast_mode else 'enabled'} - game {'will' if not fast_mode else 'will not'} be visible during training")
     
     # Train with user's choice of fast_mode to control window visibility
-    trained_agent = train(episodes=500, max_steps=3000, save_interval=50, fast_mode=fast_mode)
+    trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True)
     print("\n--------------------------------------------------------------------------------------------------------------------------")
     print("Training complete! Running comprehensive analytics on the trained agent...")
     analytics_results = evaluate_with_analytics(trained_agent, episodes=10, render=not fast_mode, fast_mode=fast_mode)
