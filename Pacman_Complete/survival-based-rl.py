@@ -159,7 +159,8 @@ class SurvivalBasedPacmanWrapper:
         self.visit_counts[pac_pos] += 1
         if any(int(p.position.x) == pac_pos[0] and int(p.position.y) == pac_pos[1]
                for p in self.game.pellets.pelletList):
-            reward += 5 / self.visit_counts[pac_pos]
+            reward += 0.75 / self.visit_counts[pac_pos]
+
         
         if len(self.recent_positions) >= 8 and len(set(self.recent_positions)) <= 2:
             reward -= 1.0
@@ -279,7 +280,7 @@ class SurvivalBasedAgent:
         self.ppo_agent = PPOAgent(state_size, action_size)
         self.q_agent = SimpleRLAgent()
         
-        self.threat_threshold = 0.04
+        self.threat_threshold = 0.05
         # Increased ghost weights to make survival mode trigger more often
         self.ghost_weights = [2.0, 1.6, 1.2, 1.0]
         self.min_distance_offset = 20.0
@@ -459,6 +460,9 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         all_rewards.append(total_reward)
         all_survival_ratio.append(episode_survival_ratio)
         
+        metrics = env.get_metrics()
+        completion_pct = metrics.get("completion_percentage", 0)
+
         window_size = min(100, len(all_rewards))
         moving_avg = sum(all_rewards[-window_size:]) / window_size
         moving_avg_rewards.append(moving_avg)
@@ -472,7 +476,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         print(f"Episode {episode + 1}/{episodes} | Score: {state['score']} | "
               f"Reward: {total_reward:.2f} | Avg(100): {moving_avg:.2f} | "
               f"Steps: {steps} | Time: {episode_time:.1f}s | Speed: {steps_per_second:.1f} steps/s | "
-              f"Survival ratio: {episode_survival_ratio:.2f}")
+              f"Survival ratio: {episode_survival_ratio:.2f} | Completion: {completion_pct:.1f}%")
         
         if (episode + 1) % save_interval == 0 or episode == episodes - 1:
             agent.save_agents(

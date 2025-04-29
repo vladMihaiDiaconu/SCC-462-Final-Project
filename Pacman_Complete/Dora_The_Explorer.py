@@ -199,7 +199,7 @@ class PacmanWrapper:
 
         # Reward for corridors (gives to Dora +2)
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
-            reward += 0.2
+            reward += 0.3
 
         # Penalty for losing lives (penalizes to Dora -100) optimization in variable
 
@@ -290,7 +290,7 @@ class SimpleRLAgent:
         # UCB bookkeeping
         self.state_counts = collections.Counter()
         self.state_action_counts = collections.Counter()
-        self.ucb_c = 1.0  # exploration strength for UCB
+        self.ucb_c = 1.5  # exploration strength for UCB
         self.steps   = 0
         ###-
 
