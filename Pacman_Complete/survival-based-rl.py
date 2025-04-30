@@ -440,8 +440,6 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
         episode_survival_ratio = 0
         episode_threat_values.append([])
 
-        completion_percentages.append(completion_pct)
-
         done = False
         while not done and steps < max_steps:
             action, survival_mode, threat_value = agent.choose_action(state)
@@ -472,7 +470,7 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
         metrics = env.get_metrics()
         completion_pct = metrics.get("completion_percentage", 0)
         completion_percentages.append(completion_pct)
-
+        
         window_size = min(100, len(all_rewards))
         moving_avg = sum(all_rewards[-window_size:]) / window_size
         moving_avg_rewards.append(moving_avg)
@@ -515,11 +513,10 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
         moving_avg_rewards, 
         all_survival_ratio,
         completion_percentages,
+        completion_rate_per_100,
         episodes,
         final=True
     )
-    
-    plot_threat_distribution(episode_threat_values)
     
     # Print final training speed
     total_time = time.time() - start_time
@@ -573,23 +570,6 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, completion_perce
     else:
         plt.savefig(f"checkpoints/survival_based_training_ep{episode}.png")
     
-    plt.close()
-
-
-def plot_threat_distribution(episode_threat_values):
-    all_threats = []
-    for ep_threats in episode_threat_values:
-        all_threats.extend(ep_threats)
-    
-    plt.figure(figsize=(10, 6))
-    plt.hist(all_threats, bins=50, alpha=0.7, color='red')
-    plt.axvline(x=0.05, color='blue', linestyle='--', label='Threshold (0.05)')
-    plt.xlabel('Threat Value')
-    plt.ylabel('Frequency')
-    plt.title('Distribution of Threat Values During Training')
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig("threat_distribution.png")
     plt.close()
 
 def evaluate_with_analytics(agent, episodes=10, render=True, fast_mode=False):
