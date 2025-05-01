@@ -5,6 +5,9 @@ import random
 import time
 import pickle
 
+# THIS IS ONLY A TEMPLATE WHICH HAS BEEN USED TO DEVELOP THE TWO ALGORITHMS, IT SERVERS NO PURPOSE IN THE RESEARCH.
+
+
 # Import the game components
 from constants import *
 from run import GameController 
