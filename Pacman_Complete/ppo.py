@@ -3,36 +3,42 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 import tensorflow as tf
-# Import the game components
 from constants import *
 from run import GameController
 
-# Direction conversion Mappings
+# Direction conversion mappings
 DIRECTION_TO_INDEX = {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3}
 INDEX_TO_DIRECTION = {v: k for k, v in DIRECTION_TO_INDEX.items()}
 ACTION_DIM = 4
 
 class PacmanWrapper:
     """
-    A simple wrapper for the Pac-Man game that handles game control
-    and provides a clean interface for reinforcement learning.
+    A wrapper around the Pac-Man game to provide a clean interface suitable for reinforcement learning agents.
+    It handles game state extraction, action execution, reward calculation, 
+    and game lifecycle management.
     """
     def __init__(self):
-        # Initialize game
+        # Initializing game controller
         self.game = GameController()
+        # Starting the game logic
         self.game.startGame()
 
-        # Initialize state variables
+        # Initializing state variables for reward calculation
+        # Storing previous state values to calculate changes
         self.previous_score = 0
         self.previous_pellets = len(self.game.pellets.pelletList)
         self.previous_powerpellets = len(self.game.pellets.powerpellets)
         self.previous_lives = self.game.lives
+        # Tracking if Pacman was alive in the previous step
         self.pacman_was_alive = True
 
         # Start the game by unpausing
         self.unpause_game()
 
     def unpause_game(self):
+        """
+        Unpause the game by simulating key presses (SPACE or RETURN).
+        """
         for _ in range(5):
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, {'key': pygame.K_SPACE}))
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, {'key': pygame.K_RETURN}))
@@ -42,27 +48,43 @@ class PacmanWrapper:
                 break
 
     def check_if_pacman_died(self):
+        """
+        Checks if Pacman died since the last check. 
+        If so, attempts to simulate key presses to continue the game after death.
+        """
+        # Detect if Pac-Man just died
         if self.pacman_was_alive and not self.game.pacman.alive:
+            # Wait a bit for death animation
             time.sleep(0.5)
+            # Try to unpause repeatedly after death
             for _ in range(10):
                 pygame.event.post(pygame.event.Event(pygame.KEYDOWN, {'key': pygame.K_SPACE}))
                 pygame.event.post(pygame.event.Event(pygame.KEYDOWN, {'key': pygame.K_RETURN}))
                 time.sleep(0.1)
                 self.game.update()
+                # If game unpaused, stop
                 if self.game.pacman.alive and not self.game.pause.paused:
                     break
+        # Update alive status for next check
         self.pacman_was_alive = self.game.pacman.alive
 
     def get_state(self):
         """
-        Get current game state in a format useful for RL
-        Returns a simplified representation of the game state
+        Gets the current game state as a dictionary containing relevant information.
+        Handles checks for death and pauses before extracting the state.
+        Returns:
+            dict: A dictionary representing the simplified game state.
+                  Returns a default state if Pacman's node is invalid.
         """
+        # Handle Pac-Man death first
         self.check_if_pacman_died()
+
+        # If game is paused, try to unpause it
         if self.game.pause.paused:
             self.unpause_game()
 
         pacman = self.game.pacman
+        # Handling potential case where Pacman might not be on a valid node
         if pacman.node is None:
             return {
                 'position': (0, 0), 
@@ -73,16 +95,18 @@ class PacmanWrapper:
                 'lives': self.game.lives,
                 'level': self.game.level
             }
-
+        # Pacman's current position
         position = (int(pacman.position.x), int(pacman.position.y))
-        # Get valid directions directly for the state_dict
+        # Get valid directions Pacman can move into from the current node
         valid_moves = pacman.validDirections()
 
+        # Information about each ghost
         ghosts = [{
             'position': (int(g.position.x), int(g.position.y)),
             'frightened': g.mode.current is FREIGHT
         } for g in self.game.ghosts]
 
+        # Return the state dictionary
         return {
             'position': position, 
             'direction': pacman.direction, 
@@ -95,8 +119,14 @@ class PacmanWrapper:
     
     def take_action(self, direction):
         """
-        Execute an action in the game
-        action should be one of: UP, DOWN, LEFT, RIGHT (0, 1, 2, 3)
+        Execute a given direction action, update the game state,
+        calculate the reward, and return the results.
+        Args:
+            direction: The direction constant (UP, DOWN, LEFT, RIGHT) to execute.
+
+        Returns:
+            tuple: (next_state_dict, reward, done) containing the next game state,
+                   the calculated reward, and a boolean indicating if the episode ended.
         """
         # Handle Pac-Man death first
         self.check_if_pacman_died()
@@ -106,9 +136,9 @@ class PacmanWrapper:
             self.unpause_game()
 
         pacman = self.game.pacman
-        #to check if Pacman is currently moving, if it is moving check the direction it wants to go,
-        # if that move is valid, then give it the direction and next node
         if pacman.node and not pacman.target:
+            # Check if the chosen direction leads to a valid neighboring node
+            # Set new direction and target node
             next_node = pacman.node.neighbors.get(direction)
             if next_node:
                 pacman.direction = direction
@@ -120,7 +150,7 @@ class PacmanWrapper:
             pacman.node = pacman.target
             pacman.target = None
 
-        # Get reward
+        # Calculate the reward
         reward = self.calculate_reward()
 
         # Get next state
@@ -130,36 +160,6 @@ class PacmanWrapper:
         done = self.game.lives <= 0 or self.game.pellets.isEmpty()
 
         return next_state, reward, done
-
-
-    # def calculate_reward(self):
-    #     """Calculate reward based on game events"""
-    #     current_score = self.game.score
-    #     current_pellets = len(self.game.pellets.pelletList)
-    #     current_powerpellets = len(self.game.pellets.powerpellets)
-    #     current_lives = self.game.lives
-
-    #     reward = 0
-
-    #     # Reward for score increase
-    #     reward += 0.1 * (current_score - self.previous_score) 
-    #     # Reward for eating pellets
-    #     reward += 5 * (self.previous_pellets - current_pellets)
-    #     # Penalty for losing lives
-    #     reward -= 50 * (self.previous_lives - current_lives) 
-    #     # Small penalty to encourage faster completion
-    #     reward -= 0.01
-
-    #     # Reward for completing level
-    #     if self.game.pellets.isEmpty():
-    #         reward += 200
-
-    #     # Update previous values
-    #     self.previous_score = current_score
-    #     self.previous_pellets = current_pellets
-    #     self.previous_lives = current_lives
-
-    #     return reward
 
     def calculate_reward(self):
         """Calculate reward based on game events"""
@@ -239,6 +239,47 @@ class PacmanWrapper:
 
         # Return initial state
         return self.get_state()
+    
+    def extract_features(self, state_dict):
+        """Converts state dict into a normalized numerical vector."""
+        # Max coordinate values for normalization
+        max_x, max_y = 560, 620
+        # Normalized position [x, y] in range [0, 1]
+        pos = np.array(state_dict['position']) / np.array([max_x, max_y])
+        # One-hot encoded direction [UP, DOWN, LEFT, RIGHT]
+        dir_one_hot = np.zeros(ACTION_DIM)
+        if state_dict['direction'] in DIRECTION_TO_INDEX:
+            dir_one_hot[DIRECTION_TO_INDEX[state_dict['direction']]] = 1
+        # One-hot encoded valid moves (binary mask) [UP, DOWN, LEFT, RIGHT]
+        valid_moves_one_hot = np.zeros(ACTION_DIM)
+        for move in state_dict['valid_moves']:
+            if move in DIRECTION_TO_INDEX:
+                valid_moves_one_hot[DIRECTION_TO_INDEX[move]] = 1
+        
+        # Extract features for each ghost, padding if fewer than 4 exist
+        ghost_features = []
+        num_ghosts = 4
+        for i in range(num_ghosts):
+            if i < len(state_dict['ghosts']):
+                ghost = state_dict['ghosts'][i]
+                # Normalized position [x, y]
+                ghost_pos = np.array(ghost['position']) / np.array([max_x, max_y])
+                # Frightened status [0.0 or 1.0]
+                frightened = np.array([float(ghost['frightened'])])
+                # Combine pos + frightened for this ghost
+                ghost_features.extend(np.concatenate((ghost_pos, frightened)))
+            else:
+                # Pad with placeholder values (-1) if ghost doesn't exist
+                ghost_features.extend([-1.0, -1.0, -1.0])
+        # Concatenate all feature components into a single numpy array
+        features = np.concatenate((
+            pos,                   # 2 features
+            dir_one_hot,           # 4 features
+            valid_moves_one_hot,   # 4 features
+            ghost_features         # 12 features (4 ghosts * 3 features/ghost)
+        )).astype(np.float32)
+        
+        return features
 
 def predict_ghost_positions(self, steps_ahead=3):
     """
@@ -441,14 +482,14 @@ def calculate_reward(self):
     if self.game.ghost_eaten_in_last_step:
         reward += 75
     
-    # NEW: Safety-aware rewards
+    # Safety-aware rewards
     # Calculate safety at current state
     safety_score = self.calculate_safety_map(self.get_state())
     
     # Reward for staying in safe positions (more escape routes)
     reward += 0.2 * safety_score
     
-    # NEW: Penalty for being near predicted future ghost positions
+    # Penalty for being near predicted future ghost positions
     predicted_positions = self.predict_ghost_positions(steps_ahead=3)
     if predicted_positions:
         pacman_pos = (self.game.pacman.position.x, self.game.pacman.position.y)
@@ -494,15 +535,25 @@ def normalize(values):
     return (values - mean) / (std + 1e-8)
 
 class PPOAgent:
+    """Proximal Policy Optimization agent with Actor-Critic architecture."""
     def __init__(self, state_size, action_size, learning_rate=0.0003, gamma=0.99, clip_epsilon=0.2, value_coeff=0.5, entropy_coeff=0.01, lam=0.95):
+        # --- Hyperparameters ---
+        # Dimension of the input state features
         self.state_size = state_size
+        # Number of discrete actions
         self.action_size = action_size
+        # Learning rate for optimizers
         self.learning_rate = learning_rate
+        # Discount factor for future rewards
         self.gamma = gamma
+        # PPO clipping parameter
         self.clip_epsilon = clip_epsilon
+        # Weight for the value loss component
         self.value_coeff = value_coeff
+        # Weight for the entropy bonus component
         self.entropy_coeff = entropy_coeff
-        self.lam = lam # Lambda for GAE
+        # Lambda parameter for Generalized Advantage Estimation (GAE)
+        self.lam = lam
 
         # Actor network (policy)
         self.actor = self._build_network(output_size=action_size, activation='softmax', name='actor')
@@ -513,33 +564,49 @@ class PPOAgent:
         self.critic_optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
         # Experience buffer (stores transitions for one update cycle)
-        self.buffer_states = []
-        self.buffer_actions = []
-        self.buffer_rewards = []
-        self.buffer_log_probs = []
-        self.buffer_values = []
-        self.buffer_next_states = [] # Needed for GAE calculation if done happens mid-buffer
-        self.buffer_dones = []      # Needed for GAE calculation
+        self.buffer_states = []      # State features
+        self.buffer_actions = []     # Action indices taken
+        self.buffer_rewards = []     # Rewards received
+        self.buffer_log_probs = []   # Log probability of the action taken
+        self.buffer_values = []      # Value estimate from the critic (for state s)
+        self.buffer_next_states = [] # Next state features (needed for GAE)
+        self.buffer_dones = []       # Done flags (needed for GAE)
 
     def _build_network(self, output_size, activation, hidden_units=[128, 128], name=None):
+        """Builds a simple feedforward neural network (used for both actor and critic)."""
         input_layer = tf.keras.layers.Input(shape=(self.state_size,), name=f'{name}_input')
         x = input_layer
+        # Hidden layers with ReLU activation and Batch Normalization
         for i, units in enumerate(hidden_units):
              x = tf.keras.layers.Dense(units, activation='relu', name=f'{name}_dense_{i}')(x)
+             # Batch Normalization helps stabilize training
              x = tf.keras.layers.BatchNormalization(name=f'{name}_bn_{i}')(x)
+        # Output layer with specified activation (softmax for actor, linear for critic)
         output_layer = tf.keras.layers.Dense(output_size, activation=activation, name=f'{name}_output')(x)
         return tf.keras.Model(inputs=input_layer, outputs=output_layer, name=name)
 
 
     def choose_action(self, state_features):
-        """Chooses an action based on the current state features."""
+        """
+        Chooses an action based on the current policy network, applying valid move masking.
+
+        Args:
+            state_features (np.array): The numerical feature vector representing the current state.
+
+        Returns:
+            tuple: (action_index, log_prob, value)
+                   - action_index: The integer index of the chosen action.
+                   - log_prob: The log probability of choosing that action under the current policy.
+                   - value: The value estimate V(s) for the current state from the critic.
+        """
+        # Convert state features to a TensorFlow tensor
         state_tensor = tf.convert_to_tensor([state_features], dtype=tf.float32)
 
-        # Predict policy (action probabilities) and value
+        # Get policy (action probabilities) and value estimate from networks
         policy = self.actor(state_tensor).numpy()[0]
         value = self.critic(state_tensor).numpy()[0, 0]
 
-        #  Masking using valid_moves included in state_features
+        # Masking using valid_moves included in state_features
         valid_moves_start_index = 2 + 4 # pos_dim + dir_dim
         valid_moves_mask = state_features[valid_moves_start_index : valid_moves_start_index + self.action_size]
 
@@ -560,15 +627,16 @@ class PPOAgent:
             if num_valid > 0:
                 final_policy = valid_moves_mask / num_valid
             else:
-                # This should ideally not happen if the game always provides valid moves
+                # Critical fallback: No valid moves identified! Default to action 0 (UP)
                 print("CRITICAL WARNING: No valid actions available! Defaulting to action 0.")
                 final_policy = np.zeros_like(policy)
-                final_policy[0] = 1.0 # Default to first action (e.g., UP)
+                final_policy[0] = 1.0
 
         # Sample action from the final policy
         try:
             action = np.random.choice(self.action_size, p=final_policy)
         except ValueError as e:
+             # Handle potential errors during sampling
              print(f"Error choosing action: {e}")
              print(f"Policy: {policy}")
              print(f"Mask: {valid_moves_mask}")
@@ -583,12 +651,14 @@ class PPOAgent:
                  action = 0 # Ultimate fallback
                  print(f"Falling back to default action: {action}")
 
+        # Calculate the log probability of the chosen action
         log_prob = np.log(final_policy[action] + 1e-10)
 
         return action, log_prob, value
 
     def store_transition(self, state, action, reward, log_prob, value, next_state, done):
-        # Store all necessary components for GAE and PPO update
+        """Stores a single transition step in the agent's buffer."""
+        # Append all parts of the transition needed for GAE calculation and PPO updates
         self.buffer_states.append(state)
         self.buffer_actions.append(action)
         self.buffer_rewards.append(reward)
@@ -598,11 +668,19 @@ class PPOAgent:
         self.buffer_dones.append(done)
 
     def learn(self, batch_size=64, epochs=10):
-        """Updates the actor and critic networks using data in the buffer."""
+        """
+        Performs the PPO learning update using the transitions stored in the buffer.
+        Calculates GAE and updates Actor and Critic networks over multiple epochs.
+
+        Args:
+            batch_size (int): Size of mini-batches used within each epoch.
+            epochs (int): Number of times to iterate over the collected buffer data.
+        """
         if not self.buffer_states: # Check if buffer is empty
             return # Nothing to learn
 
         # Prepare data from buffer
+        # Convert lists stored in the buffer to numpy arrays for efficient processing
         states = np.array(self.buffer_states, dtype=np.float32)
         actions = np.array(self.buffer_actions, dtype=np.int32)
         rewards = np.array(self.buffer_rewards, dtype=np.float32)
@@ -629,7 +707,8 @@ class PPOAgent:
         num_samples = len(states)
         indices = np.arange(num_samples)
 
-        for _ in range(epochs): # Iterate multiple times over the same batch
+        # Iterate multiple times over the same batch
+        for _ in range(epochs):
             np.random.shuffle(indices) # Shuffle data each epoch
             for start in range(0, num_samples, batch_size):
                 end = start + batch_size
@@ -661,7 +740,18 @@ class PPOAgent:
         self.buffer_dones = []
 
     def compute_gae(self, rewards, values, dones):
-        """Compute Generalized Advantage Estimation (GAE)."""
+        """
+        Computes Generalized Advantage Estimation (GAE) for a batch of transitions.
+        GAE balances bias and variance in advantage estimation.
+
+        Args:
+            rewards (np.array): Array of rewards received at each step.
+            values (np.array): Array of value estimates V(s_t) for each state.
+            dones (np.array): Array of done flags (0.0 or 1.0) for each step.
+
+        Returns:
+            np.array: The calculated GAE advantages for each step.
+        """
         batch_size = len(rewards)
         advantages = np.zeros(batch_size, dtype=np.float32)
         last_advantage = 0.0
@@ -670,22 +760,33 @@ class PPOAgent:
         for t in reversed(range(batch_size)):
             mask = 1.0 - dones[t] # 0 if done, 1 if not done
             # Calculate TD error (delta)
+            # delta_t = r_t + gamma * V(s_{t+1}) * mask - V(s_t)
             delta = rewards[t] + self.gamma * values[t+1] * mask - values[t]
             # Calculate GAE using the recursive formula
+            # A(s_t, a_t) = delta_t + gamma * lambda * mask * A(s_{t+1}, a_{t+1})
             advantages[t] = last_advantage = delta + self.gamma * self.lam * mask * last_advantage
 
         return advantages
 
     @tf.function # Decorator compiles this function into a TensorFlow graph for performance
     def _train_step(self, states, actions, advantages, log_probs_old, returns):
-        """Performs a single gradient update step for both actor and critic."""
+        """
+        Performs a single gradient update for Actor and Critic networks using TensorFlow.
+
+        Args:
+            states: Batch of state features.
+            actions: Batch of actions taken.
+            advantages: Batch of calculated GAE advantages.
+            log_probs_old: Batch of log probabilities under the policy that generated the actions.
+            returns: Batch of calculated returns (targets for the critic).
+        """
         with tf.GradientTape(persistent=True) as tape: # Persistent tape needed for separate actor/critic grads
             # --- Actor Loss ---
             policy = self.actor(states) # Current policy probabilities
             # Get log probabilities of the actions actually taken, under the *current* policy
             action_indices = tf.stack([tf.range(tf.shape(actions)[0]), actions], axis=1)
             log_probs_new = tf.gather_nd(tf.math.log(policy + 1e-10), action_indices)
-
+            
             # Ratio: pi_new(a|s) / pi_old(a|s) == exp(log_prob_new - log_prob_old)
             ratio = tf.exp(log_probs_new - log_probs_old)
 
@@ -744,32 +845,32 @@ class PPOAgent:
 
 def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, epochs_per_update=10, save_interval=50):
     """
-    Train the PPO agent on the Pac-Man game, focusing on survival evaluation.
+    Main training loop for the PPO agent on the PacmanWrapper environment.
+
+    Args:
+        agent (PPOAgent): The PPO agent instance.
+        env (PacmanWrapper): The Pac-Man environment wrapper.
+        episodes (int): Total number of training episodes.
+        max_steps (int): Maximum number of steps allowed per episode.
+        update_frequency (int): Number of steps to collect before running agent.learn().
+        epochs_per_update (int): Number of training epochs over the buffer data during agent.learn().
+        save_interval (int): Frequency (in episodes) for saving model checkpoints.
     """
     # Training & Evaluation Metrics
-    episode_rewards = []
-    moving_avg_reward = []
+    episode_rewards = []      # Stores total reward for each episode
+    moving_avg_reward = []    # Stores moving average of episode rewards
 
-    episode_steps_list = [] # Track episode duration (time alive proxy)
-    moving_avg_steps = []
+    episode_steps_list = []   # Stores number of steps survived in each episode (proxy for time alive)
+    moving_avg_steps = []     # Stores moving average of episode steps
 
-    # episode_final_lives = [] # Track lives remaining at the end of the episode
-    # moving_avg_lives = []
-
-    # episode_final_level = [] # Track level reached at the end of the episode
-    # moving_avg_level = []
-
-    # Best performance tracking (based on survival steps/time)
-    best_avg_steps = 0 # Use average steps (time alive) as primary survival metric for saving
-
-    global_step = 0 # Total steps across all episodes
-
-    avg_window = 100 # Window size for moving averages
+    best_avg_steps = 0        # Tracks the best moving average steps achieved (for saving best model)
+    global_step = 0           # Counter for total steps taken across all episodes
+    avg_window = 100          # Window size for calculating moving averages
 
     print(f"Starting PPO Training (Survival Focus): Episodes={episodes}, MaxSteps/Ep={max_steps}, UpdateFreq={update_frequency}, Epochs/Update={epochs_per_update}")
     print(f"Saving best model based on {avg_window}-episode average time alive (steps)")
 
-
+    # --- Episode Loop ---
     for episode in range(episodes):
         # Reset environment and get initial state dictionary
         state_dict = env.reset()
@@ -781,7 +882,7 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
         episode_steps = 0
         done = False
 
-        # Step loop
+        # --- Step Loop (within an episode) ---
         while not done and episode_steps < max_steps:
             # Get action, log_prob, value from PPO agent using current features
             action_index, log_prob, value = agent.choose_action(state_features)
@@ -823,8 +924,6 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
         # --- End of Episode ---
         episode_rewards.append(episode_reward)
         episode_steps_list.append(episode_steps) # Record episode steps (time alive)
-        # episode_final_lives.append(state_dict['lives']) # Record final lives
-        # episode_final_level.append(state_dict['level']) # Record final level
 
         # Calculate moving averages for all metrics
         current_avg_reward = np.mean(episode_rewards[-avg_window:]) if len(episode_rewards) >= avg_window else np.mean(episode_rewards)
@@ -832,13 +931,6 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
 
         current_avg_steps = np.mean(episode_steps_list[-avg_window:]) if len(episode_steps_list) >= avg_window else np.mean(episode_steps_list)
         moving_avg_steps.append(current_avg_steps)
-
-        # current_avg_lives = np.mean(episode_final_lives[-avg_window:]) if len(episode_final_lives) >= avg_window else np.mean(episode_final_lives)
-        # moving_avg_lives.append(current_avg_lives)
-
-        # current_avg_level = np.mean(episode_final_level[-avg_window:]) if len(episode_final_level) >= avg_window else np.mean(episode_final_level)
-        # moving_avg_level.append(current_avg_level)
-
 
         # Save best model based on moving average steps (time alive)
         # Only evaluate after enough episodes for the moving average to be meaningful
@@ -854,10 +946,6 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
                    f"Avg R ({avg_window}): {current_avg_reward:.1f} | "
                    f"Steps (Time): {episode_steps} | " # Raw steps for the episode
                    f"Avg Steps ({avg_window}): {current_avg_steps:.1f} | " # Avg steps (time alive)
-                #    f"Final Lives: {state_dict['lives']} | " # Final lives for the episode
-                #    f"Avg Lives ({avg_window}): {current_avg_lives:.1f} | " # Avg final lives
-                #    f"Final Level: {state_dict['level']} | " # Final level for the episode
-                #    f"Avg Level ({avg_window}): {current_avg_level:.1f} | " # Avg final level
                    f"Total Steps: {global_step}")
 
         # Checkpoint saving
@@ -890,18 +978,6 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
 
-
-    # # Plot Average Levels Completed & Final Lives
-    # plt.subplot(3, 1, 3) # 3rd plot
-    # plt.plot(moving_avg_level, linewidth=2, label=f'{avg_window}-Episode Avg Level', color='red')
-    # plt.plot(moving_avg_lives, linewidth=2, label=f'{avg_window}-Episode Avg Final Lives', color='purple', linestyle='--')
-    # plt.xlabel("Episode")
-    # plt.ylabel("Average Count")
-    # plt.title("PPO Training Progress (Level and Lives)")
-    # plt.legend()
-    # plt.grid(True, linestyle='--', alpha=0.6)
-
-
     plt.tight_layout()
     plt.savefig("ppo_survival_training_progress.png")
     plt.close()
@@ -912,7 +988,7 @@ def train_ppo(agent, env, episodes=1000, max_steps=2000, update_frequency=2048, 
 
 if __name__ == "__main__":
     # Configuration
-    episodes = 1000                # Total number of episodes to train
+    episodes = 1000                 # Total number of episodes to train
     max_steps_per_episode = 3000    # Max steps allowed in one episode
     ppo_update_frequency = 2048     # Number of steps to collect before updating networks
     ppo_epochs_per_update = 10      # Number of optimization epochs over the collected data
