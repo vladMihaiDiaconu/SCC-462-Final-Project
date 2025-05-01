@@ -22,7 +22,7 @@ class SurvivalBasedPacmanWrapper:
     """
     A specialized Pac-Man game wrapper that focuses on survival metrics and efficient game control.
     This wrapper handles game state management, action execution, and reward calculation
-    with a focus on encouraging Pac-Man to survive longer and collect more pellets.
+    with a focus on encouraging Pac-Man to both survive longer and collect more pellets.
     """
     def __init__(self):
         # Initialize the game controller
@@ -523,7 +523,13 @@ class SurvivalBasedAgent:
         self.q_agent.save(q_agent_path)
         print(f"Agents saved to {ppo_actor_path}, {ppo_critic_path}, and {q_agent_path}")
 
+
+
 def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
+    """
+    Train the survival-based agent for 1000 episodes, saving at an interval of 100 episodes, limiting to 3000 steps per episode.
+    The flag @fast_mode is used to increase the training speed.
+    """
     global env
     
     # Disable or reduce rendering if in fast mode
@@ -562,6 +568,7 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
     start_time = time.time()
     steps_taken = 0
     
+    # Iterate through each episode separately
     for episode in range(episodes):
         episode_start_time = time.time()
         state = env.reset()
@@ -575,6 +582,8 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
         episode_threat_values.append([])
 
         done = False
+
+        # Loop while within the limit of steps
         while not done and steps < max_steps:
             action, survival_mode, threat_value = agent.choose_action(state)
             
