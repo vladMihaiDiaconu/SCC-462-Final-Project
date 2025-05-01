@@ -872,7 +872,7 @@ fast_mode = False if user_input.lower() == 'y' else True
 print(f"Fast mode {'disabled' if not fast_mode else 'enabled'} - game {'will' if not fast_mode else 'will not'} be visible during training")
 
 # Train with user's choice of fast_mode to control window visibility
-trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True)
+trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=fast_mode)
 print("\n--------------------------------------------------------------------------------------------------------------------------")
 print("Training complete! Running comprehensive analytics on the trained agent...")
 analytics_results = evaluate_with_analytics(trained_agent, episodes=10, render=not fast_mode, fast_mode=fast_mode)
