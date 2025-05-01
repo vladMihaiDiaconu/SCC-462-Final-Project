@@ -603,10 +603,12 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
                 pygame.display.update()  # Update the display
                 time.sleep(0.01)  # Short delay to make game visible but not too slow
         
+        # All actions have to be include both single-purpose agents in the calculations
         total_actions = agent.survival_mode_count + agent.explore_mode_count
         if total_actions > 0:
             episode_survival_ratio = agent.survival_mode_count / total_actions
         
+        # Retain all metrics from the episode
         all_rewards.append(total_reward)
         all_survival_ratio.append(episode_survival_ratio)
         
@@ -624,11 +626,13 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
         steps_per_second = steps / max(episode_time, 0.1)
         avg_steps_per_second = steps_taken / max(total_time, 0.1)
         
+        # Prompt the user with the episode details
         print(f"Episode {episode + 1}/{episodes} | Score: {state['score']} | "
               f"Reward: {total_reward:.2f} | Avg(100): {moving_avg:.2f} | "
               f"Steps: {steps} | Time: {episode_time:.1f}s | Speed: {steps_per_second:.1f} steps/s | "
               f"Survival ratio: {episode_survival_ratio:.2f} | Completion: {completion_pct:.1f}%")
         
+        # Save the state of the agents after each episode in case of crash
         if (episode + 1) % save_interval == 0 or episode == episodes - 1:
             agent.save_agents(
                 ppo_actor_path=f"checkpoints/survival_ppo_actor_ep{episode + 1}.keras",
@@ -636,9 +640,11 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
                 q_agent_path=f"checkpoints/survival_q_agent_ep{episode + 1}.pkl"
             )
 
+            # Calculate the completion rates
             avg_completion_100 = np.mean(completion_percentages[-100:])
             completion_rate_per_100.append(avg_completion_100)
 
+            # Plot specifics
             plot_training_progress(
                 all_rewards, 
                 moving_avg_rewards, 
@@ -648,7 +654,7 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
                 episode + 1
             )
 
-    
+    # Save and plot the final iterations after completion of training
     agent.save_agents()
     
     plot_training_progress(
@@ -671,10 +677,21 @@ def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
     return agent
 
 
-def plot_training_progress(rewards, moving_avg, survival_ratio, completion_percentages, completion_rate_per_100, episode, final=False):
+def plot_training_progress(rewards, moving_avg, survival_ratio, completion_rate_per_100, episode, final=False):
+    """
+    Function that plots all metrics relevant to the training of the agent.
     
+    Args:
+        rewards - rewards from the episodes
+        moving_avg - the moving average per 100 episodes
+        survival_ratio - % of how often the agent felt 'threatened'
+        completion_rate_per_100 - % of level completion in 100 episodes span
+        episode - current episode
+        final - flag if this is the final step of training
+    """
     plt.figure(figsize=(12, 10))
     
+    # Episode reward plot given 100 episode moving average
     plt.subplot(2, 1, 1)
     plt.plot(rewards, alpha=0.6, label='Episode Reward', color='lightblue')
     plt.plot(moving_avg, linewidth=2, label='Moving Average (100 ep)', color='blue')
@@ -684,6 +701,7 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, completion_perce
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
+    # How much did the agent use the survival agent (1 - this % gives the exploration %)
     plt.subplot(2, 1, 2)
     plt.plot(survival_ratio, linewidth=2, label='Survival Mode Ratio', color='red')
     plt.xlabel('Episode')
@@ -692,6 +710,7 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, completion_perce
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
+    # Show level completion rate
     plt.figure(figsize=(12, 5))
     plt.plot(range(len(completion_rate_per_100)), completion_rate_per_100, 'mo-', linewidth=2)
     plt.xlabel('Checkpoint (x100 Episodes)')
@@ -699,6 +718,7 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, completion_perce
     plt.title('Average Completion Rate Every 100 Episodes')
     plt.grid(True, linestyle='--', alpha=0.6)
 
+    # Agregate final scores after training
     if final:
         plt.savefig(f"survival_based_training_completion_rate_final.png")
     else:
@@ -708,6 +728,7 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, completion_perce
 
     plt.tight_layout()
     
+    # Save final plots
     if final:
         plt.savefig(f"survival_based_training_final.png")
     else:
@@ -840,139 +861,138 @@ def evaluate_with_analytics(agent, episodes=10, render=True, fast_mode=False):
               f"Completion: {metrics['completion_percentage']:.1f}% | "
               f"{'COMPLETED' if level_completed else 'FAILED'}")
 
-if __name__ == "__main__":
     
-    # Ask user whether the user wants to see the Pac-Man window during training
-    print("--------------------------------------------------------------------------------------------------------------------------")
-    print("The training procedure takes a long time, if you wish to speed things up you would want to avoid using the Pac-Man window.")
-    user_input = input("Do you want to see the Pac-Man window during training? (y/n): ")
-    print("--------------------------------------------------------------------------------------------------------------------------")
-    fast_mode = False if user_input.lower() == 'y' else True
+# Ask user whether the user wants to see the Pac-Man window during training
+print("--------------------------------------------------------------------------------------------------------------------------")
+print("The training procedure takes a long time, if you wish to speed things up you would want to avoid using the Pac-Man window.")
+user_input = input("Do you want to see the Pac-Man window during training? (y/n): ")
+print("--------------------------------------------------------------------------------------------------------------------------")
+fast_mode = False if user_input.lower() == 'y' else True
+
+print(f"Fast mode {'disabled' if not fast_mode else 'enabled'} - game {'will' if not fast_mode else 'will not'} be visible during training")
+
+# Train with user's choice of fast_mode to control window visibility
+trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True)
+print("\n--------------------------------------------------------------------------------------------------------------------------")
+print("Training complete! Running comprehensive analytics on the trained agent...")
+analytics_results = evaluate_with_analytics(trained_agent, episodes=10, render=not fast_mode, fast_mode=fast_mode)
+
+# Generate a threshold sensitivity analysis
+print("\n--------------------------------------------------------------------------------------------------------------------------")
+print("Performing threshold sensitivity analysis...")
+
+# Store the original threshold
+original_threshold = trained_agent.threat_threshold
+
+# Test different thresholds
+thresholds = [0.01, 0.02, 0.05, 0.075, 0.1]
+threshold_results = {}
+
+for threshold in thresholds:
+    print(f"\nTesting threshold value: {threshold}")
+    # Update the threshold
+    trained_agent.threat_threshold = threshold
     
-    print(f"Fast mode {'disabled' if not fast_mode else 'enabled'} - game {'will' if not fast_mode else 'will not'} be visible during training")
+    # Run a quick evaluation
+    env = SurvivalBasedPacmanWrapper()  # Reset environment for consistent testing
     
-    # Train with user's choice of fast_mode to control window visibility
-    trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True)
-    print("\n--------------------------------------------------------------------------------------------------------------------------")
-    print("Training complete! Running comprehensive analytics on the trained agent...")
-    analytics_results = evaluate_with_analytics(trained_agent, episodes=10, render=not fast_mode, fast_mode=fast_mode)
-
-    # Generate a threshold sensitivity analysis
-    print("\n--------------------------------------------------------------------------------------------------------------------------")
-    print("Performing threshold sensitivity analysis...")
-
-    # Store the original threshold
-    original_threshold = trained_agent.threat_threshold
-
-    # Test different thresholds
-    thresholds = [0.01, 0.02, 0.05, 0.075, 0.1]
-    threshold_results = {}
-
-    for threshold in thresholds:
-        print(f"\nTesting threshold value: {threshold}")
-        # Update the threshold
-        trained_agent.threat_threshold = threshold
+    # Track metrics
+    scores = []
+    completion_percentages = []
+    survival_ratios = []
+    
+    for episode in range(5):  # Quick 5-episode test for each threshold
+        state = env.reset()
+        steps = 0
         
-        # Run a quick evaluation
-        env = SurvivalBasedPacmanWrapper()  # Reset environment for consistent testing
+        # Reset counters
+        trained_agent.survival_mode_count = 0
+        trained_agent.explore_mode_count = 0
         
-        # Track metrics
-        scores = []
-        completion_percentages = []
-        survival_ratios = []
+        done = False
+        while not done and steps < 3000:
+            action, survival_mode, _ = trained_agent.choose_action(state)
+            next_state, reward, done = env.take_action(action)
+            state = next_state
+            steps += 1
         
-        for episode in range(5):  # Quick 5-episode test for each threshold
-            state = env.reset()
-            steps = 0
-            
-            # Reset counters
-            trained_agent.survival_mode_count = 0
-            trained_agent.explore_mode_count = 0
-            
-            done = False
-            while not done and steps < 3000:
-                action, survival_mode, _ = trained_agent.choose_action(state)
-                next_state, reward, done = env.take_action(action)
-                state = next_state
-                steps += 1
-            
-            # Calculate survival ratio
-            total_actions = trained_agent.survival_mode_count + trained_agent.explore_mode_count
-            if total_actions > 0:
-                survival_ratio = trained_agent.survival_mode_count / total_actions
-                survival_ratios.append(survival_ratio)
-            
-            # Get metrics
-            metrics = env.get_metrics()
-            scores.append(metrics['score'])
-            completion_percentages.append(metrics['completion_percentage'])
-            
-            print(f"  Episode {episode+1}: Score={metrics['score']}, "
-                f"Completion={metrics['completion_percentage']:.1f}%, "
-                f"Survival Ratio={survival_ratio:.2f}")
+        # Calculate survival ratio
+        total_actions = trained_agent.survival_mode_count + trained_agent.explore_mode_count
+        if total_actions > 0:
+            survival_ratio = trained_agent.survival_mode_count / total_actions
+            survival_ratios.append(survival_ratio)
         
-        # Calculate averages
-        avg_score = sum(scores) / len(scores)
-        avg_completion = sum(completion_percentages) / len(completion_percentages)
-        avg_survival_ratio = sum(survival_ratios) / len(survival_ratios)
+        # Get metrics
+        metrics = env.get_metrics()
+        scores.append(metrics['score'])
+        completion_percentages.append(metrics['completion_percentage'])
         
-        # Store results
-        threshold_results[threshold] = {
-            'avg_score': avg_score,
-            'avg_completion': avg_completion,
-            'avg_survival_ratio': avg_survival_ratio
-        }
+        print(f"  Episode {episode+1}: Score={metrics['score']}, "
+            f"Completion={metrics['completion_percentage']:.1f}%, "
+            f"Survival Ratio={survival_ratio:.2f}")
+    
+    # Calculate averages
+    avg_score = sum(scores) / len(scores)
+    avg_completion = sum(completion_percentages) / len(completion_percentages)
+    avg_survival_ratio = sum(survival_ratios) / len(survival_ratios)
+    
+    # Store results
+    threshold_results[threshold] = {
+        'avg_score': avg_score,
+        'avg_completion': avg_completion,
+        'avg_survival_ratio': avg_survival_ratio
+    }
 
-    # Restore original threshold
-    trained_agent.threat_threshold = original_threshold
+# Restore original threshold
+trained_agent.threat_threshold = original_threshold
 
-    # Plot threshold sensitivity results
-    plt.figure(figsize=(15, 10))
+# Plot threshold sensitivity results
+plt.figure(figsize=(15, 10))
 
-    # Extract data for plotting
-    thresholds_list = list(threshold_results.keys())
-    scores_list = [threshold_results[t]['avg_score'] for t in thresholds_list]
-    completion_list = [threshold_results[t]['avg_completion'] for t in thresholds_list]
-    survival_list = [threshold_results[t]['avg_survival_ratio'] for t in thresholds_list]
+# Extract data for plotting
+thresholds_list = list(threshold_results.keys())
+scores_list = [threshold_results[t]['avg_score'] for t in thresholds_list]
+completion_list = [threshold_results[t]['avg_completion'] for t in thresholds_list]
+survival_list = [threshold_results[t]['avg_survival_ratio'] for t in thresholds_list]
 
-    # Score vs Threshold
-    plt.subplot(3, 1, 1)
-    plt.plot(thresholds_list, scores_list, 'bo-', linewidth=2)
-    plt.xlabel('Threat Threshold')
-    plt.ylabel('Average Score')
-    plt.title('Effect of Threat Threshold on Performance')
-    plt.grid(True, linestyle='--', alpha=0.6)
+# Score vs Threshold
+plt.subplot(3, 1, 1)
+plt.plot(thresholds_list, scores_list, 'bo-', linewidth=2)
+plt.xlabel('Threat Threshold')
+plt.ylabel('Average Score')
+plt.title('Effect of Threat Threshold on Performance')
+plt.grid(True, linestyle='--', alpha=0.6)
 
-    # Completion Rate vs Threshold
-    plt.subplot(3, 1, 2)
-    plt.plot(thresholds_list, completion_list, 'go-', linewidth=2)
-    plt.xlabel('Threat Threshold')
-    plt.ylabel('Level Completion (%)')
-    plt.grid(True, linestyle='--', alpha=0.6)
+# Completion Rate vs Threshold
+plt.subplot(3, 1, 2)
+plt.plot(thresholds_list, completion_list, 'go-', linewidth=2)
+plt.xlabel('Threat Threshold')
+plt.ylabel('Level Completion (%)')
+plt.grid(True, linestyle='--', alpha=0.6)
 
-    # Survival Ratio vs Threshold
-    plt.subplot(3, 1, 3)
-    plt.plot(thresholds_list, survival_list, 'ro-', linewidth=2)
-    plt.xlabel('Threat Threshold')
-    plt.ylabel('Survival Mode Ratio')
-    plt.grid(True, linestyle='--', alpha=0.6)
+# Survival Ratio vs Threshold
+plt.subplot(3, 1, 3)
+plt.plot(thresholds_list, survival_list, 'ro-', linewidth=2)
+plt.xlabel('Threat Threshold')
+plt.ylabel('Survival Mode Ratio')
+plt.grid(True, linestyle='--', alpha=0.6)
 
-    plt.tight_layout()
-    plt.savefig('threshold_sensitivity.png')
-    plt.close()
+plt.tight_layout()
+plt.savefig('threshold_sensitivity.png')
+plt.close()
 
-    # Find the best threshold
-    best_score_threshold = thresholds_list[scores_list.index(max(scores_list))]
-    best_completion_threshold = thresholds_list[completion_list.index(max(completion_list))]
+# Find the best threshold
+best_score_threshold = thresholds_list[scores_list.index(max(scores_list))]
+best_completion_threshold = thresholds_list[completion_list.index(max(completion_list))]
 
-    print("\nThreshold Sensitivity Analysis Results:")
-    print("----------------------------------------")
-    for threshold in thresholds_list:
-        print(f"Threshold {threshold}:")
-        print(f"  Score: {threshold_results[threshold]['avg_score']:.1f}")
-        print(f"  Completion Rate: {threshold_results[threshold]['avg_completion']:.1f}%")
-        print(f"  Survival Ratio: {threshold_results[threshold]['avg_survival_ratio']:.2f}")
+print("\nThreshold Sensitivity Analysis Results:")
+print("----------------------------------------")
+for threshold in thresholds_list:
+    print(f"Threshold {threshold}:")
+    print(f"  Score: {threshold_results[threshold]['avg_score']:.1f}")
+    print(f"  Completion Rate: {threshold_results[threshold]['avg_completion']:.1f}%")
+    print(f"  Survival Ratio: {threshold_results[threshold]['avg_survival_ratio']:.2f}")
 
-    print(f"\nBest threshold for score: {best_score_threshold}")
-    print(f"Best threshold for completion rate: {best_completion_threshold}")
-    print("----------------------------------------")
+print(f"\nBest threshold for score: {best_score_threshold}")
+print(f"Best threshold for completion rate: {best_completion_threshold}")
+print("----------------------------------------")
