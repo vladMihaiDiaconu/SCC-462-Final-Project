@@ -14,59 +14,89 @@ from run import GameController
 from ppo import PPOAgent, PacmanWrapper as PPOPacmanWrapper
 from Dora_The_Explorer import SimpleRLAgent
 
+# Direction conversion mappings
 DIRECTION_TO_INDEX = {UP: 0, DOWN: 1, LEFT: 2, RIGHT: 3}
 INDEX_TO_DIRECTION = {v: k for k, v in DIRECTION_TO_INDEX.items()}
 ACTION_DIM = 4
 
 class SurvivalBasedPacmanWrapper:
+
     def __init__(self):
+        # Initializing game controller
         self.game = GameController()
+        # Starting the game logic
         self.game.startGame()
         
+        # Initializing state variables for reward calculation
+        # Storing previous state values to calculate changes
         self.previous_score = 0
         self.previous_pellets = len(self.game.pellets.pelletList)
         self.previous_lives = self.game.lives
+        # Tracking if Pacman was alive in the previous step
         self.pacman_was_alive = True
         
+        # Exploration bookkeeping
+        # Counts how many times each state (position) has been visited (for novelty reward)
         self.visit_counts = collections.Counter()
+        # Stores the last loop window positions to detect back-and-forth movement
         self.recent_positions = collections.deque(maxlen=8)
+        # Stores the previous action taken (direction) for reverse/corridor checks
         self.prev_direction = STOP
         
+        # Start the game by unpausing
         self.unpause_game()
     
     def unpause_game(self):
-        for _ in range(3):  # Reduced from 5
+        """
+        Unpause the game by simulating key presses (SPACE or RETURN).
+        """
+        for _ in range(3):
             pygame.event.post(pygame.event.Event(KEYDOWN, {'key': K_SPACE}))
             pygame.event.post(pygame.event.Event(KEYDOWN, {'key': K_RETURN}))
-            time.sleep(0.05)  # Reduced from 0.1
+            time.sleep(0.05)
             self.game.update()
             
             if not self.game.pause.paused:
                 break
     
     def check_if_pacman_died(self):
+        """
+        Checks if Pacman died since the last check. 
+        If so, attempts to simulate key presses to continue the game after death.
+        """
+        # Detect if Pac-Man just died
         if self.pacman_was_alive and not self.game.pacman.alive:
-            time.sleep(0.2)  # Reduced from 0.5
-            
-            for _ in range(5):  # Reduced from 10
+            # Wait a bit for death animation
+            time.sleep(0.2)
+            # Try to unpause repeatedly after death
+            for _ in range(5):
                 pygame.event.post(pygame.event.Event(KEYDOWN, {'key': K_SPACE}))
                 pygame.event.post(pygame.event.Event(KEYDOWN, {'key': K_RETURN}))
-                time.sleep(0.05)  # Reduced from 0.1
+                time.sleep(0.05)
                 self.game.update()
-                
+                # If game unpaused, stop
                 if not self.game.pause.paused:
                     break
-        
+        # Update alive status for next check
         self.pacman_was_alive = self.game.pacman.alive
     
     def get_state(self):
+        """
+        Gets the current game state as a dictionary containing relevant information.
+        Handles checks for death and pauses before extracting the state.
+        Returns:
+            dict: A dictionary representing the simplified game state.
+                  Returns a default state if Pacman's node is invalid.
+        """
+        # Handle Pac-Man death first
         self.check_if_pacman_died()
         
+        # If game is paused, try to unpause it
         if self.game.pause.paused:
             self.unpause_game()
         
         pacman = self.game.pacman
-        
+        # Handling potential case where Pacman might not be on a valid node
         if pacman.node is None:
             return {
                 'position': (0, 0),
@@ -78,9 +108,12 @@ class SurvivalBasedPacmanWrapper:
                 'pellet_here': False
             }
         
+        # Pacman's current position
         position = (int(pacman.position.x), int(pacman.position.y))
+        # Get valid directions Pacman can move into from the current node
         valid_moves = pacman.validDirections()
         
+        # Information about each ghost
         ghosts = []
         for ghost in self.game.ghosts:
             ghost_info = {
@@ -89,12 +122,15 @@ class SurvivalBasedPacmanWrapper:
             }
             ghosts.append(ghost_info)
         
+        # Check if there is a pellet at Pacman's current exact position
         pellet_here = False
+        # Iterate through the visible pellets
         for p in self.game.pellets.pelletList:
             if int(p.position.x) == position[0] and int(p.position.y) == position[1]:
                 pellet_here = True
                 break
         
+        # Return the state dictionary
         return {
             'position': position,
             'direction': pacman.direction,
@@ -106,70 +142,103 @@ class SurvivalBasedPacmanWrapper:
         }
     
     def take_action(self, action):
+        """
+        Executes a given direction action in the game.
+
+        Args:
+            action: The direction constant (UP, DOWN, LEFT, RIGHT) chosen by the agent.
+
+        Returns:
+            tuple: (next_state_dict, reward, done)
+        """
+        # Handle Pac-Man death first
         self.check_if_pacman_died()
-        
+
+        # If game is paused, try to unpause it
         if self.game.pause.paused:
             self.unpause_game()
         
         pacman = self.game.pacman
-        
+        # Allow movement only when Pac‑Man is at a node and idle
         if pacman.node is not None and pacman.target is None:
+            # Check if the chosen action leads to a valid neighbor
             next_node = pacman.node.neighbors.get(action)
             if next_node:
+                # Set the new direction and target node
                 pacman.direction = action
                 pacman.target = next_node
         
-        # Fast update - minimize delays
+        # Update game step
         self.game.update()
-        
+        # Finalize move when target reached
         if pacman.target and pacman.position == pacman.target.position:
             pacman.node = pacman.target
             pacman.target = None
         
+        # Calculate reward
         reward = self.calculate_reward(action)
+
+        # Get next state
         next_state = self.get_state()
+
+        # Check if episode is done
         done = self.game.lives <= 0 or self.game.pellets.isEmpty()
         
         return next_state, reward, done
     
     def calculate_reward(self, action):
+        """
+        Calculates reward considering score, pellets, lives, level completion,
+        exploration bonus, loop penalty, and reverse move penalty.
+        """
+        # Get current game state values
         current_score = self.game.score
         current_pellets = len(self.game.pellets.pelletList)
         current_lives = self.game.lives
         
+        # Get current position
         pac_pos = (int(self.game.pacman.position.x), int(self.game.pacman.position.y))
         
         reward = 0
+        # Reward for score increase
         reward += 0.1 * (current_score - self.previous_score)
-        
+        # Reward for eating pellets
         pellets_eaten = self.previous_pellets - current_pellets
         reward += 12 * pellets_eaten
         
+        # Corridor Bonus: Reward for continuing straight after eating a pellet
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
             reward += 2
         
+        # Penalty for losing lives
         lives_lost = self.previous_lives - current_lives
         reward -= 100 * lives_lost
         
+        # Reward for completing level
         if self.game.pellets.isEmpty():
             reward += 500
         
+        # Small penalty to encourage faster completion
         reward -= 0.1
         
+        # Intrinsic Exploration Bonus (Novelty): Reward based on visit counts
         self.visit_counts[pac_pos] += 1
         if any(int(p.position.x) == pac_pos[0] and int(p.position.y) == pac_pos[1]
                for p in self.game.pellets.pelletList):
             reward += 5 / self.visit_counts[pac_pos]
         
+        # Loop Deterrent Penalty: Penalize if Pacman bounces back and forth between few spots
         if len(self.recent_positions) >= 8 and len(set(self.recent_positions)) <= 2:
             reward -= 1.0
         self.recent_positions.append(pac_pos)
         
+        # Reverse Move Penalty: Penalize for immediately reversing direction
         reversal_map = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
         if action == reversal_map.get(self.prev_direction, STOP):
             reward -= 0.5
         self.prev_direction = action
         
+        # Update previous values
         self.previous_score = current_score
         self.previous_pellets = current_pellets
         self.previous_lives = current_lives
@@ -179,7 +248,6 @@ class SurvivalBasedPacmanWrapper:
     def reset(self):
         """
         Reset the game for a new episode or next level.
-        Fixed to properly handle level completion transitions.
         """
         # Check if level is complete
         if self.game.pellets.isEmpty():
@@ -239,98 +307,123 @@ class SurvivalBasedPacmanWrapper:
         return metrics
 
     def extract_features(self, state_dict):
+        """Converts state dict into a normalized numerical vector."""
+        # Max coordinate values for normalization
         max_x, max_y = 560, 620
-        
+        # Normalized position [x, y] in range [0, 1]
         pos = np.array(state_dict['position']) / np.array([max_x, max_y])
-        
+        # One-hot encoded direction [UP, DOWN, LEFT, RIGHT]
         dir_one_hot = np.zeros(ACTION_DIM)
         if state_dict['direction'] in DIRECTION_TO_INDEX:
             dir_one_hot[DIRECTION_TO_INDEX[state_dict['direction']]] = 1
-        
+        # One-hot encoded valid moves (binary mask) [UP, DOWN, LEFT, RIGHT]
         valid_moves_one_hot = np.zeros(ACTION_DIM)
         for move in state_dict['valid_moves']:
             if move in DIRECTION_TO_INDEX:
                 valid_moves_one_hot[DIRECTION_TO_INDEX[move]] = 1
         
+        # Extract features for each ghost, padding if fewer than 4 exist
         ghost_features = []
         num_ghosts = 4
-        
         for i in range(num_ghosts):
             if i < len(state_dict['ghosts']):
                 ghost = state_dict['ghosts'][i]
+                # Normalized position [x, y]
                 ghost_pos = np.array(ghost['position']) / np.array([max_x, max_y])
+                # Frightened status [0.0 or 1.0]
                 frightened = np.array([float(ghost['frightened'])])
+                # Combine pos + frightened for this ghost
                 ghost_features.extend(np.concatenate((ghost_pos, frightened)))
             else:
+                # Pad with placeholder values (-1) if ghost doesn't exist
                 ghost_features.extend([-1.0, -1.0, -1.0])
-        
+        # Concatenate all feature components into a single numpy array
         features = np.concatenate((
-            pos,
-            dir_one_hot,
-            valid_moves_one_hot,
-            ghost_features
+            pos,                   # 2 features
+            dir_one_hot,           # 4 features
+            valid_moves_one_hot,   # 4 features
+            ghost_features         # 12 features (4 ghosts * 3 features/ghost)
         )).astype(np.float32)
         
         return features
 
 
 class SurvivalBasedAgent:
+    """
+    Hybrid agent switching between PPO (survival) and Q-learning (exploration)
+    based on a calculated threat value from nearby ghosts.
+    """
     def __init__(self, state_size, action_size):
+        # Initialize the PPO agent (handles survival situations)
         self.ppo_agent = PPOAgent(state_size, action_size)
+        # Initialize the Q-learning agent (handles exploration/pellet collection)
         self.q_agent = SimpleRLAgent()
-        
+        # Threat value above which the PPO agent takes control
         self.threat_threshold = 0.04
-        # Increased ghost weights to make survival mode trigger more often
+        # Weights for calculating threat (higher weight = more threatening ghost)
         self.ghost_weights = [2.0, 1.6, 1.2, 1.0]
+        # Offset added to distance in threat calculation (prevents division by zero)
         self.min_distance_offset = 20.0
-        
+        # Debug flag
         self.debug = False
-        
+        # Counters for actions taken by each agent type per episode
         self.survival_mode_count = 0
         self.explore_mode_count = 0
         self.episode_steps = 0
         self.episode_rewards = 0
-        
         # Track previous mode to only print when there's a change
         self.previous_mode_was_survival = None
     
     def calculate_threat_value(self, state_dict):
+        """Estimates threat level using weighted Manhattan distances to ghosts."""
+        # Pacman's current position
         pacman_pos = np.array(state_dict['position'])
+        # Initialize threat
         threat_value = 0.0
-        
+        # Iterate through ghosts, calculate contribution to threat
         for i, ghost in enumerate(state_dict['ghosts']):
+            # Ignore frightened ghosts
             if ghost['frightened']:
                 continue
                 
             ghost_pos = np.array(ghost['position'])
             
-            # Manhattan distance
+            # Calculate Manhattan distance (|dx| + |dy|)
             distance = np.sum(np.abs(pacman_pos - ghost_pos))
-            
+            # Get weight for this ghost type
             ghost_weight = self.ghost_weights[i] if i < len(self.ghost_weights) else 0.5
+            # Add weighted inverse distance to total threat
             threat_value += ghost_weight / (distance + self.min_distance_offset)
         
         return threat_value
     
     def choose_action(self, state_dict):
+        """Selects action: PPO if threat high, Q-agent if threat low."""
+        # Features are extracted only if PPO is chosen
         state_features = None
-        
+        # Calculate current threat level
         threat_value = self.calculate_threat_value(state_dict)
         
+        # If threat is high -> Use PPO
         if threat_value > self.threat_threshold:
+            # Extract features needed for PPO network input
             if state_features is None:
                 state_features = env.extract_features(state_dict)
             
+            # Get action index from PPO agent
             action_index, _, _ = self.ppo_agent.choose_action(state_features)
+            # Convert index back to game direction constant
             action = INDEX_TO_DIRECTION[action_index]
             
+            # Track PPO action
             self.survival_mode_count += 1
+            # Set mode flag
             survival_mode = True
             
             # Only print when switching from exploration to survival
             if self.previous_mode_was_survival is False:
                 print(f"🚨 SURVIVAL MODE! Threat: {threat_value:.4f} > {self.threat_threshold}")
-                
+                # Debug print of ghost distances
                 if self.debug:
                     pacman_pos = np.array(state_dict['position'])
                     for i, ghost in enumerate(state_dict['ghosts']):
@@ -338,10 +431,13 @@ class SurvivalBasedAgent:
                             ghost_pos = np.array(ghost['position'])
                             distance = np.sum(np.abs(pacman_pos - ghost_pos))
                             print(f"    Ghost {i}: Manhattan distance = {distance:.1f}, weight = {self.ghost_weights[i]}")
+        # If threat is low -> Use Q-Agent
         else:
+            # Get action from Q-learning agent
             action = self.q_agent.choose_action(state_dict)
-            
+            # Track Q-agent action
             self.explore_mode_count += 1
+            # Set mode flag
             survival_mode = False
             
             # Only print when switching from survival to exploration
@@ -354,14 +450,19 @@ class SurvivalBasedAgent:
         return action, survival_mode, threat_value
     
     def learn(self, state, action, reward, next_state, done, survival_mode):
+        """Updates either the PPO agent's buffer/networks or the Q-agent's Q-table."""
+        # If survival mode was active (PPO chose the action)
         if survival_mode:
+            # Convert game action constant back to numerical index for PPO
             action_index = DIRECTION_TO_INDEX.get(action, 0)
-            
+            # Extract features for current and next states
             state_features = env.extract_features(state)
             next_state_features = env.extract_features(next_state)
             
+            # Get log_prob and value estimate for the *current* state (needed for PPO buffer)
             _, log_prob, value = self.ppo_agent.choose_action(state_features)
             
+            # Store the complete transition information in PPO agent's buffer
             self.ppo_agent.store_transition(
                 state=state_features,
                 action=action_index,
@@ -372,20 +473,28 @@ class SurvivalBasedAgent:
                 done=done
             )
             
+            # Check if the PPO buffer is full enough to trigger a learning update
             if len(self.ppo_agent.buffer_states) >= 2048:
+                # Call PPO agent's learn method
                 self.ppo_agent.learn(batch_size=512, epochs=10)
+        # If exploration mode was active (Q-agent chose the action)
         else:
+            # Call Q-agent's learn method
             self.q_agent.learn(state, action, reward, next_state, done)
     
     def save_agents(self, ppo_actor_path="survival_ppo_actor.keras", ppo_critic_path="survival_ppo_critic.keras", q_agent_path="survival_q_agent.pkl"):
+        """Saves PPO model files (.keras) and Q-agent state (.pkl)."""
+        # Save PPO actor and critic networks
         self.ppo_agent.save(ppo_actor_path, ppo_critic_path)
+        # Save Q-agent's Q-table and other relevant data
         self.q_agent.save(q_agent_path)
         print(f"Agents saved to {ppo_actor_path}, {ppo_critic_path}, and {q_agent_path}")
 
 
 def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
+    """Main training loop for the hybrid SurvivalBasedAgent."""
     global env
-    
+    # --- Setup Pygame Display/Mode ---
     # Disable or reduce rendering if in fast mode
     if fast_mode:
         # Set pygame to run headless if possible
@@ -395,9 +504,10 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     else:
         # If fast_mode is disabled, ensure the display is properly initialized
         pygame.display.set_mode((800, 600))  # Use normal game window size
-        
+
+    # --- Initialize Environment and Agent ---
     env = SurvivalBasedPacmanWrapper()
-    
+    # Get initial state to determine feature vector size
     initial_state = env.reset()
     state_features = env.extract_features(initial_state)
     state_size = len(state_features)
@@ -406,42 +516,56 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     print(f"State size: {state_size}, Action size: {action_size}")
     print(f"Training with {'fast' if fast_mode else 'visual'} mode")
     
+    # Create the hybrid agent instance
     agent = SurvivalBasedAgent(state_size, action_size)
     print("Training from scratch — no pre-trained models loaded.")
-    
+    # Ensure checkpoint directory exists
     os.makedirs('checkpoints', exist_ok=True)
     
-    all_rewards = []
-    all_survival_ratio = []
-    moving_avg_rewards = []
-    episode_threat_values = []
+    # --- Setup Checkpoints and Metrics ---
+    all_rewards = []              # List of total rewards per episode
+    all_survival_ratio = []       # List of survival mode ratios per episode
+    moving_avg_rewards = []       # List of moving average rewards
+    episode_threat_values = []    # List of lists storing threat values per step per episode
     
-    # For tracking training speed
+    # --- Timing ---
+    # Track total training time
     start_time = time.time()
+    # Track total steps across all episodes
     steps_taken = 0
     
+    # --- Main Training Loop ---
     for episode in range(episodes):
+        # Time the duration of this episode
         episode_start_time = time.time()
+        # Reset env for new episode
         state = env.reset()
+        # Reset episode metrics
         total_reward = 0
         steps = 0
-        
+        # Reset agent's episode counters
         agent.survival_mode_count = 0
         agent.explore_mode_count = 0
-        agent.previous_mode_was_survival = None  # Reset mode tracking at start of episode
+        # Reset mode tracking at start of episode
+        agent.previous_mode_was_survival = None
         episode_survival_ratio = 0
+        # Create list for this episode's threat values
         episode_threat_values.append([])
         
+        # Episode termination flag
         done = False
+        # --- Step Loop (within episode) ---
         while not done and steps < max_steps:
+            # Agent chooses action (hybrid logic selects PPO or Q)
             action, survival_mode, threat_value = agent.choose_action(state)
-            
+            # Store threat value for analysis
             episode_threat_values[-1].append(threat_value)
-            
+            # Environment processes action
             next_state, reward, done = env.take_action(action)
-            
+            # Agent learns from the transition (updates PPO buffer or Q-table)
             agent.learn(state, action, reward, next_state, done, survival_mode)
             
+            # Update state and counters for next step
             state = next_state
             total_reward += reward
             steps += 1
@@ -452,28 +576,34 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
                 pygame.display.update()  # Update the display
                 time.sleep(0.01)  # Short delay to make game visible but not too slow
         
+        # --- End of Episode ---
+        # Calculate episode survival ratio
         total_actions = agent.survival_mode_count + agent.explore_mode_count
         if total_actions > 0:
             episode_survival_ratio = agent.survival_mode_count / total_actions
         
+        # Store episode metrics
         all_rewards.append(total_reward)
         all_survival_ratio.append(episode_survival_ratio)
         
+        # Calculate moving average reward
         window_size = min(100, len(all_rewards))
         moving_avg = sum(all_rewards[-window_size:]) / window_size
         moving_avg_rewards.append(moving_avg)
         
-        # Calculate episode speed metrics
+        # --- Performance Metrics ---
         episode_time = time.time() - episode_start_time
         total_time = time.time() - start_time
         steps_per_second = steps / max(episode_time, 0.1)
         avg_steps_per_second = steps_taken / max(total_time, 0.1)
         
+        # --- Print Episode Summary ---
         print(f"Episode {episode + 1}/{episodes} | Score: {state['score']} | "
               f"Reward: {total_reward:.2f} | Avg(100): {moving_avg:.2f} | "
               f"Steps: {steps} | Time: {episode_time:.1f}s | Speed: {steps_per_second:.1f} steps/s | "
               f"Survival ratio: {episode_survival_ratio:.2f}")
         
+        # --- Save Checkpoint Models and Plots ---
         if (episode + 1) % save_interval == 0 or episode == episodes - 1:
             agent.save_agents(
                 ppo_actor_path=f"checkpoints/survival_ppo_actor_ep{episode + 1}.keras",
@@ -488,8 +618,11 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
                 episode + 1
             )
     
+    # --- End of Training Loop ---
+    # Save the final agent models after training completes
     agent.save_agents()
     
+    # Generate final summary plots
     plot_training_progress(
         all_rewards, 
         moving_avg_rewards, 
@@ -498,21 +631,25 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         final=True
     )
     
+    # Plot distribution of threat values encountered during training
     plot_threat_distribution(episode_threat_values)
     
-    # Print final training speed
+    # --- Print Final Training Summary ---
     total_time = time.time() - start_time
     print(f"\nTraining complete!")
     print(f"Total time: {total_time:.0f} seconds")
     print(f"Total steps: {steps_taken}")
     print(f"Average speed: {steps_taken/total_time:.1f} steps/second")
     
+    # Return the trained hybrid agent
     return agent
 
 
 def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=False):
+    """Generates and saves plots for reward and survival mode ratio during training."""
     plt.figure(figsize=(12, 10))
     
+    # --- Subplot 1: Rewards ---
     plt.subplot(2, 1, 1)
     plt.plot(rewards, alpha=0.6, label='Episode Reward', color='lightblue')
     plt.plot(moving_avg, linewidth=2, label='Moving Average (100 ep)', color='blue')
@@ -522,6 +659,7 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
+    # --- Subplot 2: Survival Mode Ratio ---
     plt.subplot(2, 1, 2)
     plt.plot(survival_ratio, linewidth=2, label='Survival Mode Ratio', color='red')
     plt.xlabel('Episode')
@@ -530,8 +668,9 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
-    plt.tight_layout()
+    plt.tight_layout() # Adjust spacing
     
+    # Determine filename for saving the plot
     if final:
         plt.savefig(f"survival_based_training_final.png")
     else:
@@ -541,11 +680,14 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
 
 
 def plot_threat_distribution(episode_threat_values):
+    """Generates and saves a histogram of threat values encountered during training."""
+    # Combine threat values from all episodes into a single list
     all_threats = []
     for ep_threats in episode_threat_values:
         all_threats.extend(ep_threats)
     
     plt.figure(figsize=(10, 6))
+    # Plot histogram of threat values
     plt.hist(all_threats, bins=50, alpha=0.7, color='red')
     plt.axvline(x=0.05, color='blue', linestyle='--', label='Threshold (0.05)')
     plt.xlabel('Threat Value')

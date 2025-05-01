@@ -1,23 +1,29 @@
 from constants import *
 
+# Class defining common attributes and methods for different mazes
 class MazeBase(object):
+    # Initializing common maze properties
     def __init__(self):
         self.portalPairs = {}
         self.homeoffset = (0, 0)
         self.ghostNodeDeny = {UP:(), DOWN:(), LEFT:(), RIGHT:()}
 
+    # Applying the defined portal pairs to a node controller
     def setPortalPairs(self, nodes):
         for pair in list(self.portalPairs.values()):
             nodes.setPortalPair(*pair)
 
+    # Connecting the ghost home nodes to the main maze grid
     def connectHomeNodes(self, nodes):
         key = nodes.createHomeNodes(*self.homeoffset)
         nodes.connectHomeNodes(key, self.homenodeconnectLeft, LEFT)
         nodes.connectHomeNodes(key, self.homenodeconnectRight, RIGHT)
 
+    # Helper function to calculate coordinates relative to the ghost home offset
     def addOffset(self, x, y):
         return x+self.homeoffset[0], y+self.homeoffset[1]
 
+    # Applying ghost movement restrictions for this maze
     def denyGhostsAccess(self, ghosts, nodes):
         nodes.denyAccessList(*(self.addOffset(2, 3) + (LEFT, ghosts)))
         nodes.denyAccessList(*(self.addOffset(2, 3) + (RIGHT, ghosts)))
@@ -26,7 +32,7 @@ class MazeBase(object):
             for values in self.ghostNodeDeny[direction]:
                 nodes.denyAccessList(*(values + (direction, ghosts)))
 
-
+# Concrete class defining the layout and properties for the first maze
 class Maze1(MazeBase):
     def __init__(self):
         MazeBase.__init__(self)
@@ -40,7 +46,7 @@ class Maze1(MazeBase):
         self.ghostNodeDeny = {UP:((12, 14), (15, 14), (12, 26), (15, 26)), LEFT:(self.addOffset(2, 3),),
                               RIGHT:(self.addOffset(2, 3),)}
 
-
+# Concrete class defining the layout and properties for the second maze
 class Maze2(MazeBase):
     def __init__(self):
         MazeBase.__init__(self)
@@ -54,7 +60,7 @@ class Maze2(MazeBase):
         self.ghostNodeDeny = {UP:((9, 14), (18, 14), (11, 23), (16, 23)), LEFT:(self.addOffset(2, 3),),
                               RIGHT:(self.addOffset(2, 3),)}
 
-
+# Class to manage and load maze data based on level
 class MazeData(object):
     def __init__(self):
         self.obj = None

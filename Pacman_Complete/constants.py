@@ -1,3 +1,4 @@
+# Grid and screen dimensions
 TILEWIDTH = 16
 TILEHEIGHT = 16
 NROWS = 36
@@ -6,6 +7,8 @@ SCREENWIDTH = NCOLS*TILEWIDTH
 SCREENHEIGHT = NROWS*TILEHEIGHT
 SCREENSIZE = (SCREENWIDTH, SCREENHEIGHT)
 
+# Colors definitions for different game components
+# (background, fruits, ghosts, pacman)
 BLACK = (0, 0, 0)
 YELLOW = (255, 255, 0)
 WHITE = (255, 255, 255)
@@ -15,6 +18,7 @@ TEAL = (100,255,255)
 ORANGE = (230,190,40)
 GREEN = (0, 255, 0)
 
+# Movement directions
 STOP = 0
 UP = 1
 DOWN = -1
@@ -22,6 +26,7 @@ LEFT = 2
 RIGHT = -2
 PORTAL = 3
 
+# Game objects
 PACMAN = 0
 PELLET = 1
 POWERPELLET = 2
@@ -32,15 +37,18 @@ INKY = 6
 CLYDE = 7
 FRUIT = 8
 
+# Ghosts states
 SCATTER = 0
 CHASE = 1
 FREIGHT = 2
 SPAWN = 3
 
+# Text messages
 SCORETXT = 0
 LEVELTXT = 1
 READYTXT = 2
 PAUSETXT = 3
 GAMEOVERTXT = 4
 
+# Proximity check
 SAFE_DISTANCE = 35
