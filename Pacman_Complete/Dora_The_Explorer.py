@@ -210,7 +210,7 @@ class PacmanWrapper:
 
         # Corridor Bonus: Reward for continuing straight after eating a pellet
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
-            reward += 0.2
+            reward += 0.3
 
         # Penalty for losing lives
         reward -= 5 * (self.previous_lives - current_lives)
@@ -289,12 +289,12 @@ class SimpleRLAgent:
         self.discount_factor = 0.99
         # Exploration rate
         self.epsilon = 1.0   # Exploration rate / Dora'll start fully exploratory
-        self.epsilon_decay = 0.9999 # To keep Dora as explorer as possible in most episodes
+        self.epsilon_decay = 0.9995 # To keep Dora as explorer as possible in most episodes
         self.epsilon_min = 0.4
         # UCB bookkeeping
         self.state_counts = collections.Counter()
         self.state_action_counts = collections.Counter()
-        self.ucb_c = 1.0  # exploration strength for UCB
+        self.ucb_c = 1.5  # exploration strength for UCB
         self.steps   = 0
 
     def state_to_key(self, state):

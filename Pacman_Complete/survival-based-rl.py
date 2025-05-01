@@ -204,7 +204,8 @@ class SurvivalBasedPacmanWrapper:
         reward += 0.1 * (current_score - self.previous_score)
         # Reward for eating pellets
         pellets_eaten = self.previous_pellets - current_pellets
-        reward += 12 * pellets_eaten
+
+        reward += 14 * pellets_eaten
         
         # Corridor Bonus: Reward for continuing straight after eating a pellet
         if pellets_eaten > 0 and action == self.prev_direction and action != STOP:
@@ -225,11 +226,12 @@ class SurvivalBasedPacmanWrapper:
         self.visit_counts[pac_pos] += 1
         if any(int(p.position.x) == pac_pos[0] and int(p.position.y) == pac_pos[1]
                for p in self.game.pellets.pelletList):
-            reward += 5 / self.visit_counts[pac_pos]
+            reward += 0.75 / self.visit_counts[pac_pos]
+
         
         # Loop Deterrent Penalty: Penalize if Pacman bounces back and forth between few spots
         if len(self.recent_positions) >= 8 and len(set(self.recent_positions)) <= 2:
-            reward -= 1.0
+            reward -= 2.0
         self.recent_positions.append(pac_pos)
         
         # Reverse Move Penalty: Penalize for immediately reversing direction
@@ -243,6 +245,10 @@ class SurvivalBasedPacmanWrapper:
         self.previous_pellets = current_pellets
         self.previous_lives = current_lives
         
+        # Add reward for finishing above 75% of the level
+        if (240 - current_pellets) / 240 > 0.75 and self.previous_lives > current_lives:
+            reward += 100
+
         return reward
     
     def reset(self):
@@ -359,7 +365,7 @@ class SurvivalBasedAgent:
         # Initialize the Q-learning agent (handles exploration/pellet collection)
         self.q_agent = SimpleRLAgent()
         # Threat value above which the PPO agent takes control
-        self.threat_threshold = 0.04
+        self.threat_threshold = 0.05
         # Weights for calculating threat (higher weight = more threatening ghost)
         self.ghost_weights = [2.0, 1.6, 1.2, 1.0]
         # Offset added to distance in threat calculation (prevents division by zero)
@@ -491,7 +497,7 @@ class SurvivalBasedAgent:
         print(f"Agents saved to {ppo_actor_path}, {ppo_critic_path}, and {q_agent_path}")
 
 
-def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
+def train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True):
     """Main training loop for the hybrid SurvivalBasedAgent."""
     global env
     # --- Setup Pygame Display/Mode ---
@@ -527,6 +533,8 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     all_survival_ratio = []       # List of survival mode ratios per episode
     moving_avg_rewards = []       # List of moving average rewards
     episode_threat_values = []    # List of lists storing threat values per step per episode
+    completion_rate_per_100 = []
+    completion_percentages = []
     
     # --- Timing ---
     # Track total training time
@@ -586,6 +594,10 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         all_rewards.append(total_reward)
         all_survival_ratio.append(episode_survival_ratio)
         
+        metrics = env.get_metrics()
+        completion_pct = metrics.get("completion_percentage", 0)
+        completion_percentages.append(completion_pct)
+        
         # Calculate moving average reward
         window_size = min(100, len(all_rewards))
         moving_avg = sum(all_rewards[-window_size:]) / window_size
@@ -601,7 +613,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         print(f"Episode {episode + 1}/{episodes} | Score: {state['score']} | "
               f"Reward: {total_reward:.2f} | Avg(100): {moving_avg:.2f} | "
               f"Steps: {steps} | Time: {episode_time:.1f}s | Speed: {steps_per_second:.1f} steps/s | "
-              f"Survival ratio: {episode_survival_ratio:.2f}")
+              f"Survival ratio: {episode_survival_ratio:.2f} | Completion: {completion_pct:.1f}%")
         
         # --- Save Checkpoint Models and Plots ---
         if (episode + 1) % save_interval == 0 or episode == episodes - 1:
@@ -610,13 +622,19 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
                 ppo_critic_path=f"checkpoints/survival_ppo_critic_ep{episode + 1}.keras",
                 q_agent_path=f"checkpoints/survival_q_agent_ep{episode + 1}.pkl"
             )
-            
+
+            avg_completion_100 = np.mean(completion_percentages[-100:])
+            completion_rate_per_100.append(avg_completion_100)
+
             plot_training_progress(
                 all_rewards, 
                 moving_avg_rewards, 
                 all_survival_ratio,
+                completion_percentages,
+                completion_rate_per_100,
                 episode + 1
             )
+
     
     # --- End of Training Loop ---
     # Save the final agent models after training completes
@@ -627,12 +645,11 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
         all_rewards, 
         moving_avg_rewards, 
         all_survival_ratio,
+        completion_percentages,
+        completion_rate_per_100,
         episodes,
         final=True
     )
-    
-    # Plot distribution of threat values encountered during training
-    plot_threat_distribution(episode_threat_values)
     
     # --- Print Final Training Summary ---
     total_time = time.time() - start_time
@@ -645,7 +662,7 @@ def train(episodes=500, max_steps=3000, save_interval=50, fast_mode=True):
     return agent
 
 
-def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=False):
+def plot_training_progress(rewards, moving_avg, survival_ratio, completion_percentages, completion_rate_per_100, episode, final=False):
     """Generates and saves plots for reward and survival mode ratio during training."""
     plt.figure(figsize=(12, 10))
     
@@ -668,6 +685,20 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
+    plt.figure(figsize=(12, 5))
+    plt.plot(range(len(completion_rate_per_100)), completion_rate_per_100, 'mo-', linewidth=2)
+    plt.xlabel('Checkpoint (x100 Episodes)')
+    plt.ylabel('Avg Completion %')
+    plt.title('Average Completion Rate Every 100 Episodes')
+    plt.grid(True, linestyle='--', alpha=0.6)
+
+    if final:
+        plt.savefig(f"survival_based_training_completion_rate_final.png")
+    else:
+        plt.savefig(f"checkpoints/survival_based_training_completion_rate_ep{episode}.png")
+
+    plt.close()
+
     plt.tight_layout() # Adjust spacing
     
     # Determine filename for saving the plot
@@ -676,26 +707,6 @@ def plot_training_progress(rewards, moving_avg, survival_ratio, episode, final=F
     else:
         plt.savefig(f"checkpoints/survival_based_training_ep{episode}.png")
     
-    plt.close()
-
-
-def plot_threat_distribution(episode_threat_values):
-    """Generates and saves a histogram of threat values encountered during training."""
-    # Combine threat values from all episodes into a single list
-    all_threats = []
-    for ep_threats in episode_threat_values:
-        all_threats.extend(ep_threats)
-    
-    plt.figure(figsize=(10, 6))
-    # Plot histogram of threat values
-    plt.hist(all_threats, bins=50, alpha=0.7, color='red')
-    plt.axvline(x=0.05, color='blue', linestyle='--', label='Threshold (0.05)')
-    plt.xlabel('Threat Value')
-    plt.ylabel('Frequency')
-    plt.title('Distribution of Threat Values During Training')
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig("threat_distribution.png")
     plt.close()
 
 def evaluate_with_analytics(agent, episodes=10, render=True, fast_mode=False):
@@ -835,7 +846,7 @@ if __name__ == "__main__":
     print(f"Fast mode {'disabled' if not fast_mode else 'enabled'} - game {'will' if not fast_mode else 'will not'} be visible during training")
     
     # Train with user's choice of fast_mode to control window visibility
-    trained_agent = train(episodes=500, max_steps=3000, save_interval=50, fast_mode=fast_mode)
+    trained_agent = train(episodes=1000, max_steps=3000, save_interval=100, fast_mode=True)
     print("\n--------------------------------------------------------------------------------------------------------------------------")
     print("Training complete! Running comprehensive analytics on the trained agent...")
     analytics_results = evaluate_with_analytics(trained_agent, episodes=10, render=not fast_mode, fast_mode=fast_mode)
